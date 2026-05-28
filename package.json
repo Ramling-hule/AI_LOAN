@@ -1,0 +1,29 @@
+{
+  "name": "ai-loan-ag",
+  "version": "1.0.0",
+  "description": "AI-powered SME Loan Underwriting Platform — Monorepo",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "ai-services"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:ai": "npm run dev --workspace=ai-services",
+    "lint": "eslint . --ext .js,.jsx",
+    "lint:fix": "eslint . --ext .js,.jsx --fix",
+    "format": "prettier --write \"**/*.{js,jsx,json,md,css}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-import": "^2.29.1",
+    "prettier": "^3.2.5"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

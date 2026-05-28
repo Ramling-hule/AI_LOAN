@@ -1,0 +1,31 @@
+# =============================================================================
+# BACKEND WORKSPACE RULES
+# =============================================================================
+
+# Dependencies
+node_modules/
+
+# Local Environment Credentials (containing secrets like MONGODB_URI, JWT_SECRET, CLOUDINARY_API_KEY)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs and Debug files
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database files & backups
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql
+
+# System & OS Files
+.DS_Store
+Thumbs.db
