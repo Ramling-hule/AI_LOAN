@@ -12,12 +12,27 @@ const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// ── Request Interceptor — inject access token ─────────────────────────────
+const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
+};
+
+// ── Request Interceptor — inject access token & CSRF token ─────────────────────
 apiClient.interceptors.request.use(
   (config) => {
     const { accessToken } = useAuthStore.getState();
     if (accessToken) {
       config.headers.Authorization = `Bearer ${accessToken}`;
+    }
+
+    // Inject CSRF token for state-mutating requests
+    if (['post', 'put', 'delete', 'patch'].includes(config.method?.toLowerCase())) {
+      const csrfToken = getCookie('csrfToken');
+      if (csrfToken) {
+        config.headers['x-csrf-token'] = csrfToken;
+      }
     }
     return config;
   },

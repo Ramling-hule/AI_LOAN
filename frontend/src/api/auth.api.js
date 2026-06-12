@@ -29,6 +29,10 @@ export const authApi = {
   logout: () =>
     apiClient.post('/auth/logout', {}, { withCredentials: true }),
 
+  /** Verify login MFA OTP code */
+  mfaVerify: (tempToken, code) =>
+    apiClient.post('/auth/mfa/verify', { tempToken, code }, { withCredentials: true }),
+
   /** Get current user info */
   me: () =>
     apiClient.get('/auth/me', { withCredentials: true }),

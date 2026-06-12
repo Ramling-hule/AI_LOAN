@@ -40,6 +40,9 @@ export function AuthProvider({ children }) {
     setLoading(true);
     try {
       const { data } = await authApi.smeLogin(credentials);
+      if (data.data.mfaRequired) {
+        return { mfaRequired: true, tempToken: data.data.tempToken };
+      }
       setAuth({ user: data.data.user, accessToken: data.data.accessToken });
       return data.data.user;
     } finally {
@@ -52,6 +55,9 @@ export function AuthProvider({ children }) {
     setLoading(true);
     try {
       const { data } = await authApi.smeRegister(formData);
+      if (data.data.mfaRequired) {
+        return { mfaRequired: true, tempToken: data.data.tempToken, user: data.data.user };
+      }
       setAuth({ user: data.data.user, accessToken: data.data.accessToken });
       return data.data.user;
     } finally {
@@ -64,6 +70,9 @@ export function AuthProvider({ children }) {
     setLoading(true);
     try {
       const { data } = await authApi.bankLogin(credentials);
+      if (data.data.mfaRequired) {
+        return { mfaRequired: true, tempToken: data.data.tempToken };
+      }
       setAuth({ user: data.data.user, accessToken: data.data.accessToken });
       return data.data.user;
     } finally {
@@ -76,6 +85,21 @@ export function AuthProvider({ children }) {
     setLoading(true);
     try {
       const { data } = await authApi.bankRegister(formData);
+      if (data.data.mfaRequired) {
+        return { mfaRequired: true, tempToken: data.data.tempToken, user: data.data.user };
+      }
+      setAuth({ user: data.data.user, accessToken: data.data.accessToken });
+      return data.data.user;
+    } finally {
+      setLoading(false);
+    }
+  }, [setAuth, setLoading]);
+
+  // ── MFA Verification ───────────────────────────────────────────────────
+  const verifyMfa = useCallback(async (tempToken, code) => {
+    setLoading(true);
+    try {
+      const { data } = await authApi.mfaVerify(tempToken, code);
       setAuth({ user: data.data.user, accessToken: data.data.accessToken });
       return data.data.user;
     } finally {
@@ -106,6 +130,7 @@ export function AuthProvider({ children }) {
     loginBank,
     registerSME,
     registerBank,
+    verifyMfa,
     logout,
     hasRole: (...roles) => hasRole(...roles),
     getRoleLabel,
