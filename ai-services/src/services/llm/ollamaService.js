@@ -1,9 +1,7 @@
-'use strict';
+import axios from 'axios';
 
-const axios = require('axios');
-
-const env = require('../../config/env');
-const logger = require('../../utils/logger');
+import env from '../../config/env.js';
+import logger from '../../utils/logger.js';
 
 // ---------------------------------------------------------------------------
 // Ollama Service — REST client for local LLM inference.
@@ -16,14 +14,52 @@ const ollamaClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+let availableModels = [];
+
 /**
  * Check if Ollama is reachable and the default model is available.
  */
 const ping = async () => {
-  const response = await ollamaClient.get('/api/tags');
-  const models = response.data?.models?.map((m) => m.name) || [];
-  logger.info(`✅  Ollama connected. Available models: ${models.join(', ') || 'none'}`);
-  return models;
+  try {
+    const response = await ollamaClient.get('/api/tags');
+    availableModels = response.data?.models?.map((m) => m.name) || [];
+    logger.info(`✅  Ollama connected. Available models: ${availableModels.join(', ') || 'none'}`);
+    return availableModels;
+  } catch (err) {
+    logger.error(`❌  Ollama connection failed: ${err.message}`);
+    return [];
+  }
+};
+
+/**
+ * Helper to resolve the correct model name based on what's actually pulled in Ollama.
+ */
+const resolveModelName = async (requestedModel) => {
+  if (availableModels.length === 0) {
+    await ping();
+  }
+
+  if (availableModels.includes(requestedModel)) {
+    return requestedModel;
+  }
+
+  // Look for exact matches with ':latest' added or partial matches
+  const matched = availableModels.find(
+    (m) => m === `${requestedModel}:latest` || m.startsWith(requestedModel)
+  );
+
+  if (matched) {
+    logger.warn(`⚠️ Model '${requestedModel}' not found in tags. Auto-resolving to '${matched}'`);
+    return matched;
+  }
+
+  // Fallback to first available model if any exists
+  if (availableModels.length > 0) {
+    logger.warn(`⚠️ Model '${requestedModel}' not found. Falling back to first available: '${availableModels[0]}'`);
+    return availableModels[0];
+  }
+
+  return requestedModel;
 };
 
 /**
@@ -34,10 +70,11 @@ const ping = async () => {
  * @returns {Promise<string>} Generated text
  */
 const generate = async (prompt, model = env.OLLAMA_DEFAULT_MODEL, options = {}) => {
-  logger.debug(`Ollama generate — model: ${model}`);
+  const resolvedModel = await resolveModelName(model);
+  logger.debug(`Ollama generate — model: ${resolvedModel}`);
 
   const response = await ollamaClient.post('/api/generate', {
-    model,
+    model: resolvedModel,
     prompt,
     stream: false,
     options,
@@ -54,10 +91,11 @@ const generate = async (prompt, model = env.OLLAMA_DEFAULT_MODEL, options = {}) 
  * @returns {Promise<string>} Assistant reply
  */
 const chat = async (messages, model = env.OLLAMA_DEFAULT_MODEL, options = {}) => {
-  logger.debug(`Ollama chat — model: ${model}, messages: ${messages.length}`);
+  const resolvedModel = await resolveModelName(model);
+  logger.debug(`Ollama chat — model: ${resolvedModel}, messages: ${messages.length}`);
 
   const response = await ollamaClient.post('/api/chat', {
-    model,
+    model: resolvedModel,
     messages,
     stream: false,
     options,
@@ -73,12 +111,13 @@ const chat = async (messages, model = env.OLLAMA_DEFAULT_MODEL, options = {}) =>
  * @returns {Promise<number[]>} Embedding vector
  */
 const embed = async (text, model = env.OLLAMA_DEFAULT_MODEL) => {
+  const resolvedModel = await resolveModelName(model);
   const response = await ollamaClient.post('/api/embeddings', {
-    model,
+    model: resolvedModel,
     prompt: text,
   });
 
   return response.data.embedding;
 };
 
-module.exports = { ping, generate, chat, embed };
+export { ping, generate, chat, embed };
