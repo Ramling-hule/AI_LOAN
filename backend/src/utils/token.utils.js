@@ -13,25 +13,52 @@ import env from '../config/env.js';
 /**
  * Generate an access token for the given payload.
  * @param {{ id: string, email: string, role: string, type: 'sme'|'bank_admin'|'super_admin' }} payload
+ * @param {string} sessionId - JTI of the refresh token representing the session
  * @returns {string} Signed JWT
  */
-export const generateAccessToken = (payload) => {
-  return jwt.sign(payload, env.JWT_SECRET, {
-    expiresIn: env.JWT_EXPIRES_IN,
-    jwtid: uuidv4(), // unique token ID for revocation tracking
-  });
+export const generateAccessToken = (payload, sessionId) => {
+  return jwt.sign(
+    { ...payload, sessionId },
+    env.JWT_SECRET,
+    {
+      expiresIn: env.JWT_EXPIRES_IN,
+      jwtid: uuidv4(),
+    }
+  );
 };
 
 /**
  * Generate a refresh token.
  * @param {{ id: string }} payload
+ * @param {string} jti - JTI of the refresh token
  * @returns {string} Signed JWT
  */
-export const generateRefreshToken = (payload) => {
+export const generateRefreshToken = (payload, jti = uuidv4()) => {
   return jwt.sign(payload, env.JWT_REFRESH_SECRET, {
     expiresIn: env.JWT_REFRESH_EXPIRES_IN,
+    jwtid: jti,
+  });
+};
+
+/**
+ * Generate a short-lived temporary MFA token.
+ * @param {object} payload
+ * @returns {string} Signed JWT
+ */
+export const generateMfaToken = (payload) => {
+  return jwt.sign(payload, env.JWT_SECRET, {
+    expiresIn: '5m',
     jwtid: uuidv4(),
   });
+};
+
+/**
+ * Verify a temporary MFA token.
+ * @param {string} token
+ * @returns {object} Decoded payload
+ */
+export const verifyMfaToken = (token) => {
+  return jwt.verify(token, env.JWT_SECRET);
 };
 
 /**

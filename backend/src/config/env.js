@@ -18,8 +18,8 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32).optional(),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
 
-  // Bcrypt
-  BCRYPT_SALT_ROUNDS: z.coerce.number().default(12),
+  // Redis
+  REDIS_URL: z.string().url().default('redis://localhost:6379'),
 
   // Cloudinary
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
