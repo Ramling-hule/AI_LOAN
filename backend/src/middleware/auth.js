@@ -1,6 +1,9 @@
 import { verifyAccessToken } from '../utils/token.utils.js';
 import ApiError from '../utils/ApiError.js';
 import asyncHandler from '../utils/asyncHandler.js';
+import { getSession, setSession } from '../config/redis.js';
+import { Role } from '../models/index.js';
+import { detectSessionAnomaly } from './fraud.js';
 
 // ---------------------------------------------------------------------------
 // Role constants — single source of truth for all role strings
@@ -13,13 +16,10 @@ export const ROLES = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
-// protect — JWT authentication middleware
-//
-// Extracts the Bearer token from the Authorization header,
-// verifies it, and attaches the decoded payload to req.user.
+// protect — JWT & Redis session authentication middleware
 // ---------------------------------------------------------------------------
 
-export const protect = asyncHandler(async (req, _res, next) => {
+export const protect = asyncHandler(async (req, res, next) => {
   const authHeader = req.headers['authorization'];
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -29,16 +29,21 @@ export const protect = asyncHandler(async (req, _res, next) => {
   const token = authHeader.split(' ')[1];
 
   const decoded = verifyAccessToken(token);
-  req.user = decoded;  // { id, email, role, role_id, iat, exp, jti }
 
-  next();
+  // Validate active Redis session for revocation tracking
+  const session = await getSession(decoded.sessionId);
+  if (!session) {
+    throw ApiError.unauthorized('Session has expired or was revoked');
+  }
+
+  req.user = decoded;  // { id, email, role, role_id, sessionId, iat, exp, jti }
+
+  // Perform fraud hijacking/IP/UA anomaly verification
+  await detectSessionAnomaly(req, res, next);
 });
 
 // ---------------------------------------------------------------------------
-// authorizeRoles — RBAC middleware factory
-//
-// Usage:
-//   router.get('/admin', protect, authorizeRoles(ROLES.BANK_ADMIN, ROLES.SUPER_ADMIN))
+// authorizeRoles — RBAC middleware factory (roles-based)
 // ---------------------------------------------------------------------------
 
 export const authorizeRoles = (...allowedRoles) =>
@@ -51,6 +56,42 @@ export const authorizeRoles = (...allowedRoles) =>
       throw ApiError.forbidden(
         `Role '${req.user.role}' is not authorized to access this resource`
       );
+    }
+
+    next();
+  });
+
+// ---------------------------------------------------------------------------
+// authorizePermissions — RBAC middleware factory (fine-grained permissions)
+// Checks if the user's role has the required permissions (with Redis cache)
+// ---------------------------------------------------------------------------
+
+export const authorizePermissions = (...requiredPermissions) =>
+  asyncHandler(async (req, _res, next) => {
+    if (!req.user) {
+      throw ApiError.unauthorized('Not authenticated');
+    }
+
+    const session = await getSession(req.user.sessionId);
+    if (!session) {
+      throw ApiError.unauthorized('Session has expired');
+    }
+
+    let permissions = session.permissions;
+
+    // Cache miss: retrieve permissions from Database and store in Redis session cache
+    if (!permissions) {
+      const role = await Role.findById(req.user.role_id).populate('permissions');
+      permissions = role ? role.permissions.map(p => p.name) : [];
+      
+      // Update Redis session cache
+      session.permissions = permissions;
+      await setSession(req.user.sessionId, session);
+    }
+
+    const hasPermission = requiredPermissions.every(p => permissions.includes(p));
+    if (!hasPermission) {
+      throw ApiError.forbidden('You do not have the required permissions to access this resource');
     }
 
     next();

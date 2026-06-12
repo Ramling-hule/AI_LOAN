@@ -18,7 +18,7 @@ const otpSchema = new mongoose.Schema(
     sme_id: {
       type: String,
       ref: 'SMEUser',
-      required: [true, 'SME User reference is required'],
+      required: false,
       index: true,
     },
 
