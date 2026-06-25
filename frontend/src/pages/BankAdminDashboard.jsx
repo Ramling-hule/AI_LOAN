@@ -18,6 +18,8 @@ import {
   History,
   AlertTriangle,
   ChevronRight,
+  Sparkles,
+  ShieldCheck,
 } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext.jsx';
@@ -26,6 +28,9 @@ import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@
 import { Badge } from '@/components/ui/badge.jsx';
 import { loanApi } from '@/api/loan.api.js';
 import { bankApi } from '@/api/bank.api.js';
+import { underwritingApi } from '@/api/underwriting.api.js';
+import { extractionApi } from '@/api/extraction.api.js';
+import { auditLogApi } from '@/api/auditLog.api.js';
 
 export default function BankAdminDashboard() {
   const { user, logout, getRoleLabel } = useAuth();
@@ -33,6 +38,16 @@ export default function BankAdminDashboard() {
 
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalItems, setTotalItems] = useState(0);
+
+  // Search and Filter states
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   // Modal Review States
   const [selectedApp, setSelectedApp] = useState(null);
@@ -44,6 +59,103 @@ export default function BankAdminDashboard() {
   const [submittingStatus, setSubmittingStatus] = useState(false);
   const [statusError, setStatusError] = useState('');
   const [expandedLogs, setExpandedLogs] = useState(false);
+  const [underwritingAssessment, setUnderwritingAssessment] = useState(null);
+  const [loadingAssessment, setLoadingAssessment] = useState(false);
+  const [assessingLoan, setAssessingLoan] = useState(false);
+  const [assessmentError, setAssessmentError] = useState('');
+  const [activeReviewTab, setActiveReviewTab] = useState('parameters');
+  const [reevaluatingLoan, setReevaluatingLoan] = useState(false);
+  const [agentTraceIndex, setAgentTraceIndex] = useState(0);
+
+  const AGENT_TRACE_LOGS = [
+    "Initializing RAG Vectorization Pipeline...",
+    "Agent [Identity]: Extracting PAN, GSTIN, CIN...",
+    "Agent [Financial]: Computing Annual Turnover & Net Profit...",
+    "Agent [Bank]: Analyzing average monthly balances...",
+    "Agent [Loan]: Auditing outstanding loan balances...",
+    "Agent [Promoter]: Verifying director and shareholder records...",
+    "Agent [Collateral]: Evaluating property and security assets...",
+    "Agent [Verifier]: Performing secondary confidence checks...",
+    "Agent [Underwriter]: Auditing against bank policy directives...",
+    "Finalizing AI Risk Score and generating report..."
+  ];
+
+  useEffect(() => {
+    let interval;
+    if (reevaluatingLoan || assessingLoan) {
+      setAgentTraceIndex(0);
+      interval = setInterval(() => {
+        setAgentTraceIndex((prev) => (prev < AGENT_TRACE_LOGS.length - 1 ? prev + 1 : prev));
+      }, 5000);
+    }
+    return () => clearInterval(interval);
+  }, [reevaluatingLoan, assessingLoan]);
+
+  // RAG Chat States
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatting, setIsChatting] = useState(false);
+  const [chatRetryAfter, setChatRetryAfter] = useState(0);
+  const messagesEndRef = React.useRef(null);
+
+  useEffect(() => {
+    let timer;
+    if (chatRetryAfter > 0) {
+      timer = setInterval(() => {
+        setChatRetryAfter(prev => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [chatRetryAfter]);
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || !selectedApp || chatRetryAfter > 0) return;
+    const msg = chatInput.trim();
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', content: msg }]);
+    setIsChatting(true);
+    try {
+      const res = await loanApi.chatWithLoan(selectedApp._id, msg);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: res.data.answer, sources: res.data.sources }]);
+    } catch (err) {
+      if (err.response?.status === 429) {
+        const retryAfter = err.response.data?.retry_after || 30;
+        setChatRetryAfter(Math.ceil(retryAfter));
+        setChatMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: `⏳ I am currently processing too many requests (API Free Tier Quota exceeded).\n\nPlease wait ${Math.ceil(retryAfter)} seconds and try asking your question again.` 
+        }]);
+      } else {
+        setChatMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err.response?.data?.message || err.message}` }]);
+      }
+    } finally {
+      setIsChatting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeReviewTab === 'chat' && messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages, activeReviewTab]);
+
+  // Parameter extraction states
+  const [extractionResult, setExtractionResult] = useState(null);
+  const [loadingExtraction, setLoadingExtraction] = useState(false);
+  const [triggeringExtraction, setTriggeringExtraction] = useState(false);
+  const [extractionError, setExtractionError] = useState('');
+
+  // Audit Logs states
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [loadingAudit, setLoadingAudit] = useState(false);
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditTotalPages, setAuditTotalPages] = useState(1);
+  const [auditSearchTerm, setAuditSearchTerm] = useState('');
+  const [auditStatusFilter, setAuditStatusFilter] = useState('all');
+  const [expandedAuditLogs, setExpandedAuditLogs] = useState({});
+
+  // Main Dashboard View Toggle
+  const [dashboardView, setDashboardView] = useState('loans');
 
   // Confidential guidelines states
   const [policies, setPolicies] = useState([]);
@@ -61,6 +173,7 @@ export default function BankAdminDashboard() {
   const [editingPolicyId, setEditingPolicyId] = useState(null);
   const [uploadContent, setUploadContent] = useState('');
   const [isModalEditing, setIsModalEditing] = useState(false);
+  const [sendingPolicyNotification, setSendingPolicyNotification] = useState({});
 
   const auditedApp = applications.find((app) => app._id === auditAppId);
 
@@ -73,8 +186,21 @@ export default function BankAdminDashboard() {
   const fetchApplications = async () => {
     try {
       setLoading(true);
-      const { data } = await loanApi.getAll();
-      setApplications(data.data);
+      const { data } = await loanApi.getAll({
+        page: currentPage,
+        limit: pageSize,
+        status: statusFilter,
+        search: searchTerm,
+      });
+      if (data.data && data.data.docs) {
+        setApplications(data.data.docs);
+        setTotalPages(data.data.totalPages || 1);
+        setTotalItems(data.data.totalDocs || 0);
+      } else {
+        setApplications(data.data || []);
+        setTotalPages(1);
+        setTotalItems(data.data?.length || 0);
+      }
     } catch (err) {
       console.error('Failed to load applications for bank:', err);
     } finally {
@@ -94,8 +220,74 @@ export default function BankAdminDashboard() {
     }
   };
 
+  const loadExtractionResult = async (loanId) => {
+    setLoadingExtraction(true);
+    setExtractionError('');
+    setExtractionResult(null);
+    try {
+      const { data } = await extractionApi.getExtractionResult(loanId);
+      setExtractionResult(data.data);
+    } catch (err) {
+      setExtractionError(err.response?.data?.message || 'Failed to retrieve AI extraction result.');
+    } finally {
+      setLoadingExtraction(false);
+    }
+  };
+
+  const handleTriggerExtraction = async (loanId, force = false) => {
+    setTriggeringExtraction(true);
+    setExtractionError('');
+    try {
+      if (force) {
+        await extractionApi.reExtractLoan(loanId);
+      } else {
+        await extractionApi.triggerExtraction(loanId);
+      }
+      await loadExtractionResult(loanId);
+      await fetchApplications();
+    } catch (err) {
+      setExtractionError(err.response?.data?.message || 'Failed to execute parameter extraction pipeline.');
+    } finally {
+      setTriggeringExtraction(false);
+    }
+  };
+
+  const fetchAuditLogs = async () => {
+    try {
+      setLoadingAudit(true);
+      const params = {
+        page: auditPage,
+        limit: 15,
+      };
+      if (auditSearchTerm) params.search = auditSearchTerm;
+      if (auditStatusFilter !== 'all') params.status = auditStatusFilter;
+      
+      const { data } = await auditLogApi.getLogs(params);
+      if (data.data && data.data.docs) {
+        setAuditLogs(data.data.docs);
+        setAuditTotalPages(data.data.totalPages || 1);
+      } else {
+        setAuditLogs([]);
+        setAuditTotalPages(1);
+      }
+    } catch (err) {
+      console.error('Failed to load audit logs:', err);
+    } finally {
+      setLoadingAudit(false);
+    }
+  };
+
   useEffect(() => {
     fetchApplications();
+  }, [currentPage, statusFilter]);
+
+  useEffect(() => {
+    if (dashboardView === 'audits') {
+      fetchAuditLogs();
+    }
+  }, [auditPage, auditStatusFilter, dashboardView]);
+
+  useEffect(() => {
     fetchPolicies();
   }, []);
 
@@ -240,6 +432,87 @@ export default function BankAdminDashboard() {
     }
   };
 
+  const loadUnderwritingReport = async (loanId) => {
+    setLoadingAssessment(true);
+    setAssessmentError('');
+    setUnderwritingAssessment(null);
+    try {
+      const { data } = await underwritingApi.getReport(loanId);
+      setUnderwritingAssessment(data.data?.assessment || data.data);
+    } catch (err) {
+      if (err.response?.status === 404) {
+        setUnderwritingAssessment(null);
+      } else {
+        setAssessmentError(err.response?.data?.message || 'Failed to fetch AI underwriting report.');
+      }
+    } finally {
+      setLoadingAssessment(false);
+    }
+  };
+
+  const handleAssessLoan = async (loanId) => {
+    setAssessingLoan(true);
+    setAssessmentError('');
+    try {
+      const { data } = await underwritingApi.assessLoan(loanId);
+      setUnderwritingAssessment(data.data?.assessment || data.data);
+      await fetchApplications();
+    } catch (err) {
+      setAssessmentError(err.response?.data?.message || 'AI Underwriting evaluation failed.');
+    } finally {
+      setAssessingLoan(false);
+    }
+  };
+
+  const handleReevaluateLoan = async (loanId) => {
+    setReevaluatingLoan(true);
+    setAssessmentError('');
+    try {
+      const { data } = await underwritingApi.reevaluateLoan(loanId);
+      setUnderwritingAssessment(data.data?.assessment || data.data);
+      await loadExtractionResult(loanId);
+      await fetchApplications();
+    } catch (err) {
+      setAssessmentError(err.response?.data?.message || 'AI Credit re-evaluation workflow failed.');
+    } finally {
+      setReevaluatingLoan(false);
+    }
+  };
+
+  const handleNotifyPolicyIssue = async (policyTitle, details) => {
+    if (!selectedApp?._id) return;
+    setSendingPolicyNotification(prev => ({ ...prev, [policyTitle]: true }));
+    try {
+      await underwritingApi.notifyPolicyIssue(selectedApp._id, policyTitle, details);
+      alert(`Policy compliance issue notification sent to user for "${policyTitle}". Application status transitioned to Missing Info.`);
+      await fetchApplications();
+      setSelectedApp(null);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to send policy issue notification');
+    } finally {
+      setSendingPolicyNotification(prev => ({ ...prev, [policyTitle]: false }));
+    }
+  };
+
+  const handleBypassPolicyApprove = async (policyTitle, details) => {
+    if (!selectedApp?._id) return;
+    if (!window.confirm(`Are you sure you want to bypass policy "${policyTitle}" and approve this loan application? This action will be recorded in the audit trail.`)) {
+      return;
+    }
+    try {
+      await loanApi.changeStatus(
+        selectedApp._id,
+        'approved',
+        `Bypassed compliance policy "${policyTitle}": ${details}. Underwriter manually approved.`
+      );
+      alert(`Loan application approved and policy "${policyTitle}" bypassed.`);
+      await fetchApplications();
+      setSelectedApp(null);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to bypass and approve loan');
+    }
+  };
+
   const handleOpenReview = (app) => {
     setSelectedApp(app);
     setNextStatus('');
@@ -247,6 +520,8 @@ export default function BankAdminDashboard() {
     setMissingDocs([]);
     setStatusError('');
     setExpandedLogs(false);
+    setActiveReviewTab('parameters');
+    setUnderwritingAssessment(null);
     loadHistoryLogs(app._id);
   };
 
@@ -469,7 +744,38 @@ export default function BankAdminDashboard() {
           </Card>
         </div>
 
-        {/* Grid for Branch Details & Credit Policy Guidelines */}
+        {/* Main Tab Controller */}
+        <div className="flex items-center gap-2 p-1 bg-slate-900/60 border border-white/5 rounded-2xl w-fit relative z-10">
+          <button
+            onClick={() => setDashboardView('loans')}
+            className={`px-5 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
+              dashboardView === 'loans'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            Loan Vetting Pipeline
+          </button>
+          <button
+            onClick={() => {
+              setDashboardView('audits');
+              fetchAuditLogs();
+            }}
+            className={`px-5 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
+              dashboardView === 'audits'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <History className="w-4.5 h-4.5" />
+            Security Audit Trail
+          </button>
+        </div>
+
+        {dashboardView === 'loans' ? (
+          <>
+            {/* Grid for Branch Details & Credit Policy Guidelines */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 flex">
             {/* Bank Branch and Officer Info */}
@@ -808,6 +1114,77 @@ export default function BankAdminDashboard() {
           </div>
         </div>
 
+        {/* Applications Search & Filter Bar */}
+        <div className="flex flex-col sm:flex-row gap-4 bg-slate-900/60 border border-white/5 p-4 rounded-2xl relative z-10">
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              setCurrentPage(1);
+              fetchApplications();
+            }} 
+            className="flex-1 flex gap-2"
+          >
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                placeholder="Search applicant's business name, promoter, or email..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-950 border border-white/10 rounded-xl pl-4 pr-4 py-2.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
+              />
+            </div>
+            <button
+              type="submit"
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs transition-all flex items-center justify-center"
+            >
+              Search
+            </button>
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setCurrentPage(1);
+                  loanApi.getAll({
+                    page: 1,
+                    limit: pageSize,
+                    status: statusFilter,
+                    search: '',
+                  }).then(({ data }) => {
+                    if (data.data && data.data.docs) {
+                      setApplications(data.data.docs);
+                      setTotalPages(data.data.totalPages || 1);
+                      setTotalItems(data.data.totalDocs || 0);
+                    }
+                  });
+                }}
+                className="px-3.5 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl font-bold text-xs transition-all flex items-center justify-center"
+              >
+                Clear
+              </button>
+            )}
+          </form>
+          <div className="w-full sm:w-48">
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all cursor-pointer font-semibold"
+            >
+              <option value="all">All Statuses</option>
+              <option value="submitted">Submitted</option>
+              <option value="eligibility_check">Eligibility Check</option>
+              <option value="agent_review">Agent Review</option>
+              <option value="missing_info">Missing Info</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="disbursed">Disbursed</option>
+            </select>
+          </div>
+        </div>
+
         {/* Incoming Applications Queue */}
         <Card>
           <CardHeader className="border-b border-white/5 flex flex-row items-center justify-between py-4">
@@ -883,6 +1260,244 @@ export default function BankAdminDashboard() {
           </CardContent>
         </Card>
 
+        {/* Applications Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between border border-white/5 px-6 py-4 bg-slate-900/20 rounded-2xl relative z-10">
+            <span className="text-xs text-slate-400">
+              Showing Page <span className="font-semibold text-white">{currentPage}</span> of <span className="font-semibold text-white">{totalPages}</span> (Total Applications: <span className="font-semibold text-white">{totalItems}</span>)
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-3.5 py-1.5 bg-slate-900 border border-white/5 hover:border-white/10 hover:bg-white/[0.02] disabled:opacity-40 disabled:hover:bg-slate-900 text-slate-300 rounded-xl text-xs font-semibold transition-all"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="px-3.5 py-1.5 bg-slate-900 border border-white/5 hover:border-white/10 hover:bg-white/[0.02] disabled:opacity-40 disabled:hover:bg-slate-900 text-slate-300 rounded-xl text-xs font-semibold transition-all"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+      </>
+    ) : (
+      /* SECURITY AUDIT TRAIL VIEW */
+      <div className="space-y-6 relative z-10 animate-fade-in">
+        {/* Search & Filters */}
+        <div className="flex flex-col sm:flex-row gap-4 bg-slate-900/60 border border-white/5 p-4 rounded-2xl">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setAuditPage(1);
+              fetchAuditLogs();
+            }}
+            className="flex-1 flex gap-2"
+          >
+            <input
+              type="text"
+              placeholder="Search audit logs by actor email, action, resource ID..."
+              value={auditSearchTerm}
+              onChange={(e) => setAuditSearchTerm(e.target.value)}
+              className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-2.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
+            />
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-semibold text-xs transition-all"
+            >
+              Search
+            </button>
+            {auditSearchTerm && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAuditSearchTerm('');
+                  setAuditPage(1);
+                  auditLogApi.getLogs({
+                    page: 1,
+                    limit: 15,
+                    status: auditStatusFilter,
+                    search: '',
+                  }).then(({ data }) => {
+                    if (data.data && data.data.docs) {
+                      setAuditLogs(data.data.docs);
+                      setAuditTotalPages(data.data.totalPages || 1);
+                    }
+                  });
+                }}
+                className="px-3.5 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl font-bold text-xs transition-all flex items-center justify-center"
+              >
+                Clear
+              </button>
+            )}
+          </form>
+          <div className="w-full sm:w-48">
+            <select
+              value={auditStatusFilter}
+              onChange={(e) => {
+                setAuditStatusFilter(e.target.value);
+                setAuditPage(1);
+              }}
+              className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all font-semibold cursor-pointer"
+            >
+              <option value="all">All Outcomes</option>
+              <option value="success">Success Only</option>
+              <option value="failure">Failure Only</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Audit Logs Table */}
+        <Card>
+          <CardHeader className="border-b border-white/5 py-4">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <History className="w-4.5 h-4.5 text-emerald-400" />
+              Immutable Compliance Audit Logs
+            </CardTitle>
+            <CardDescription className="text-[10px] text-slate-400 font-mono">
+              Click any log entry row to expand full JSON payload and request metadata.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">Timestamp</TableHead>
+                  <TableHead>Actor</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>HTTP Route</TableHead>
+                  <TableHead>Outcome</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loadingAudit ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-10 text-slate-400">
+                      <Loader2 className="w-6 h-6 animate-spin text-blue-500 mx-auto" />
+                      <span className="block mt-2 text-xs">Loading activity logs...</span>
+                    </TableCell>
+                  </TableRow>
+                ) : auditLogs.length > 0 ? (
+                  auditLogs.map((log) => {
+                    const isExpanded = !!expandedAuditLogs[log._id];
+                    return (
+                      <React.Fragment key={log._id}>
+                        <TableRow
+                          onClick={() => setExpandedAuditLogs(prev => ({ ...prev, [log._id]: !isExpanded }))}
+                          className="hover:bg-white/[0.01] transition-colors cursor-pointer select-none"
+                        >
+                          <TableCell className="pl-6 font-mono text-[10px] text-slate-400">
+                            {new Date(log.created_at).toLocaleString()}
+                          </TableCell>
+                          <TableCell className="font-semibold text-slate-200">
+                            {log.actor_email || log.actor_id}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className="bg-slate-900 border-white/5 text-[9px] font-mono font-bold uppercase text-slate-300">
+                              {log.action}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-mono text-[10px] text-slate-300">
+                            <span className="text-blue-400 font-bold mr-1">{log.method}</span>
+                            {log.resource_path}
+                          </TableCell>
+                          <TableCell>
+                            {log.status === 'success' ? (
+                              <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px]">
+                                SUCCESS ({log.status_code})
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-[9px]">
+                                FAILED ({log.status_code || 'ERR'})
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        {isExpanded && (
+                          <TableRow className="bg-slate-950/45 hover:bg-slate-950/45">
+                            <TableCell colSpan={5} className="p-4 border-t border-white/5">
+                              <div className="grid md:grid-cols-2 gap-4 text-[10px] text-slate-300 font-medium">
+                                <div>
+                                  <span className="block text-slate-400 uppercase tracking-wider mb-1 font-bold">Request Context</span>
+                                  <div className="bg-slate-950 p-3 border border-white/5 rounded-xl space-y-1.5">
+                                    <p><span className="text-slate-500 font-bold">IP Address:</span> <span className="font-mono text-white">{log.ip_address || '—'}</span></p>
+                                    <p><span className="text-slate-500 font-bold">User Agent:</span> <span className="text-white truncate block max-w-sm">{log.user_agent || '—'}</span></p>
+                                    <p><span className="text-slate-500 font-bold">Resource Reference:</span> <span className="text-white">{log.resource_model} (ID: {log.resource_id})</span></p>
+                                  </div>
+                                </div>
+                                <div>
+                                  <span className="block text-slate-400 uppercase tracking-wider mb-1 font-bold">State Payload / Errors</span>
+                                  <div className="bg-slate-950 p-3 border border-white/5 rounded-xl space-y-1.5">
+                                    {log.error_message && (
+                                      <p><span className="text-red-400 font-semibold font-bold">Error Logged:</span> <span className="text-red-300 font-mono">{log.error_message}</span></p>
+                                    )}
+                                    {log.previous_state && (
+                                      <div>
+                                        <span className="text-slate-500 font-bold block mb-0.5">Previous State:</span>
+                                        <pre className="text-white bg-slate-900 p-2 rounded text-[9px] overflow-x-auto font-mono max-h-24">{JSON.stringify(log.previous_state, null, 2)}</pre>
+                                      </div>
+                                    )}
+                                    {log.new_state && (
+                                      <div className="mt-1.5">
+                                        <span className="text-slate-500 font-bold block mb-0.5">New State:</span>
+                                        <pre className="text-white bg-slate-900 p-2 rounded text-[9px] overflow-x-auto font-mono max-h-24">{JSON.stringify(log.new_state, null, 2)}</pre>
+                                      </div>
+                                    )}
+                                    {!log.error_message && !log.previous_state && !log.new_state && (
+                                      <p className="italic text-slate-500">No extra state payload logged for this transaction</p>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-10 text-slate-400">
+                      No matching audit log records found.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        {/* Audit Pagination Controls */}
+        {auditTotalPages > 1 && (
+          <div className="flex items-center justify-between border border-white/5 px-6 py-4 bg-slate-900/20 rounded-2xl">
+            <span className="text-xs text-slate-400">
+              Showing Page <span className="font-semibold text-white">{auditPage}</span> of <span className="font-semibold text-white">{auditTotalPages}</span>
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setAuditPage(prev => Math.max(prev - 1, 1))}
+                disabled={auditPage === 1}
+                className="px-3.5 py-1.5 bg-slate-900 border border-white/5 hover:border-white/10 hover:bg-white/[0.02] disabled:opacity-40 disabled:hover:bg-slate-900 text-slate-300 rounded-xl text-xs font-semibold transition-all"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setAuditPage(prev => Math.min(prev + 1, auditTotalPages))}
+                disabled={auditPage === auditTotalPages}
+                className="px-3.5 py-1.5 bg-slate-900 border border-white/5 hover:border-white/10 hover:bg-white/[0.02] disabled:opacity-40 disabled:hover:bg-slate-900 text-slate-300 rounded-xl text-xs font-semibold transition-all"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+
       </main>
 
       {/* =================================================================== */}
@@ -909,340 +1524,1019 @@ export default function BankAdminDashboard() {
               </button>
             </div>
 
+            {/* Tab Navigation */}
+            <div className="px-6 bg-slate-900 border-b border-white/5 flex gap-4 text-xs">
+              <button
+                onClick={() => setActiveReviewTab('parameters')}
+                className={`py-3 font-semibold border-b-2 transition-all ${
+                  activeReviewTab === 'parameters'
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-slate-400 hover:text-white'
+                }`}
+              >
+                General Parameters & Audit
+              </button>
+              <button
+                onClick={() => {
+                  setActiveReviewTab('extraction');
+                  loadExtractionResult(selectedApp._id);
+                }}
+                className={`py-3 font-semibold border-b-2 transition-all flex items-center gap-1.5 ${
+                  activeReviewTab === 'extraction'
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-slate-400 hover:text-white'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                AI Extracted Summary
+              </button>
+              <button
+                onClick={() => {
+                  setActiveReviewTab('underwriting');
+                  loadUnderwritingReport(selectedApp._id);
+                }}
+                className={`py-3 font-semibold border-b-2 transition-all flex items-center gap-1.5 ${
+                  activeReviewTab === 'underwriting'
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-slate-400 hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                AI Underwriting Vetting Report
+              </button>
+              <button
+                onClick={() => setActiveReviewTab('chat')}
+                className={`py-3 font-semibold border-b-2 transition-all flex items-center gap-1.5 ${
+                  activeReviewTab === 'chat'
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-slate-400 hover:text-white'
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                Chat with Documents
+              </button>
+            </div>
+
             {/* Modal Body */}
             <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
-              
-              {/* STATUS TIMELINE */}
-              <div className="space-y-3">
-                <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
-                  <Layers className="w-3.5 h-3.5 text-blue-400" />
-                  Status Progression Timeline
-                </h4>
-                
-                {/* Horizontal Timeline Tracker */}
-                <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex justify-between items-center relative overflow-x-auto min-w-[500px]">
-                  {[
-                    { key: 'submitted', label: 'Submitted' },
-                    { key: 'eligibility_check', label: 'Eligibility Check' },
-                    { key: 'agent_review', label: 'Agent Review' },
-                    { key: 'missing_info', label: 'Missing Info', isAlert: true },
-                    { key: 'approved', label: 'Approved' },
-                  ].map((step, idx, arr) => {
-                    const statusesOrdered = ['submitted', 'eligibility_check', 'agent_review', 'missing_info', 'approved', 'rejected', 'disbursed'];
-                    const currentIdx = statusesOrdered.indexOf(selectedApp.status);
-                    const stepIdx = statusesOrdered.indexOf(step.key);
+              {activeReviewTab === 'parameters' ? (
+                <>
+                  {/* STATUS TIMELINE */}
+                  <div className="space-y-3">
+                    <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                      <Layers className="w-3.5 h-3.5 text-blue-400" />
+                      Status Progression Timeline
+                    </h4>
+                    
+                    {/* Horizontal Timeline Tracker */}
+                    <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex justify-between items-center relative overflow-x-auto min-w-[500px]">
+                      {[
+                        { key: 'submitted', label: 'Submitted' },
+                        { key: 'eligibility_check', label: 'Eligibility Check' },
+                        { key: 'agent_review', label: 'Agent Review' },
+                        { key: 'missing_info', label: 'Missing Info', isAlert: true },
+                        { key: 'approved', label: 'Approved' },
+                      ].map((step, idx, arr) => {
+                        const statusesOrdered = ['submitted', 'eligibility_check', 'agent_review', 'missing_info', 'approved', 'rejected', 'disbursed'];
+                        const currentIdx = statusesOrdered.indexOf(selectedApp.status);
+                        const stepIdx = statusesOrdered.indexOf(step.key);
 
-                    // Determine step styling
-                    let isCompleted = stepIdx < currentIdx && selectedApp.status !== 'rejected';
-                    let isActive = selectedApp.status === step.key;
-                    let isAlert = step.isAlert && selectedApp.status === 'missing_info';
-                    let isMuted = !isCompleted && !isActive;
+                        // Determine step styling
+                        let isCompleted = stepIdx < currentIdx && selectedApp.status !== 'rejected';
+                        let isActive = selectedApp.status === step.key;
+                        let isAlert = step.isAlert && selectedApp.status === 'missing_info';
+                        let isMuted = !isCompleted && !isActive;
 
-                    if (selectedApp.status === 'rejected' && step.key === 'approved') {
-                      step.label = 'Rejected';
-                      isActive = true;
-                      isAlert = true;
-                      isMuted = false;
-                    }
+                        if (selectedApp.status === 'rejected' && step.key === 'approved') {
+                          step.label = 'Rejected';
+                          isActive = true;
+                          isAlert = true;
+                          isMuted = false;
+                        }
 
-                    return (
-                      <div key={step.key} className="flex items-center gap-2 relative z-10">
-                        <div className={`w-6 h-6 rounded-full border flex items-center justify-center font-bold text-[10px] transition-all duration-300 ${
-                          isAlert ? 'bg-red-500/10 border-red-500/30 text-red-400 animate-pulse' :
-                          isActive ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
-                          isCompleted ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
-                          'bg-slate-900 border-white/5 text-slate-400'
-                        }`}>
-                          {isCompleted ? <CheckCircle className="w-3.5 h-3.5" /> : idx + 1}
-                        </div>
-                        <div className="flex flex-col">
-                          <span className={`font-semibold tracking-tight ${
-                            isAlert ? 'text-red-400' :
-                            isActive ? 'text-amber-400 font-bold' :
-                            isCompleted ? 'text-emerald-400' :
-                            'text-slate-400'
-                          }`}>{step.label}</span>
-                        </div>
-                        {idx < arr.length - 1 && (
-                          <div className={`h-0.5 w-6 bg-white/5`} />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Grid detail blocks */}
-              <div className="grid sm:grid-cols-2 gap-4">
-                {/* Column 1: Financial & Parameters */}
-                <div className="space-y-4">
-                  {/* Loan Parameters */}
-                  <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
-                    <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1 flex justify-between">
-                      <span>Loan parameters</span>
-                      <span className="text-[10px] font-mono text-slate-300">Risk Score: {selectedApp.risk_score}</span>
-                    </h5>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <span className="text-slate-300 block text-[10px]">Requested</span>
-                        <span className="text-white font-semibold font-mono">₹{selectedApp.amount?.toLocaleString()}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-300 block text-[10px]">Tenure</span>
-                        <span className="text-white font-semibold">{selectedApp.tenure} Months</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-300 block text-[10px]">Purpose</span>
-                        <span className="text-white font-semibold capitalize">{selectedApp.purpose?.replace('_', ' ')}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-300 block text-[10px]">Monthly Turnover</span>
-                        <span className="text-white font-semibold font-mono">₹{selectedApp.revenue?.toLocaleString()}</span>
-                      </div>
+                        return (
+                          <div key={step.key} className="flex items-center gap-2 relative z-10">
+                            <div className={`w-6 h-6 rounded-full border flex items-center justify-center font-bold text-[10px] transition-all duration-300 ${
+                              isAlert ? 'bg-red-500/10 border-red-500/30 text-red-400 animate-pulse' :
+                              isActive ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
+                              isCompleted ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                              'bg-slate-900 border-white/5 text-slate-400'
+                            }`}>
+                              {isCompleted ? <CheckCircle className="w-3.5 h-3.5" /> : idx + 1}
+                            </div>
+                            <div className="flex flex-col">
+                              <span className={`font-semibold tracking-tight ${
+                                isAlert ? 'text-red-400' :
+                                isActive ? 'text-amber-400 font-bold' :
+                                isCompleted ? 'text-emerald-400' :
+                                'text-slate-400'
+                              }`}>{step.label}</span>
+                            </div>
+                            {idx < arr.length - 1 && (
+                              <div className={`h-0.5 w-6 bg-white/5`} />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
-                  {/* Business & Promoter details */}
-                  <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
-                    <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1">Entity structure</h5>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <span className="text-slate-300 block text-[10px]">Legal Name</span>
-                        <span className="text-white font-semibold">{selectedApp.business_info?.legal_name}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-300 block text-[10px]">Structure</span>
-                        <span className="text-white capitalize">{selectedApp.business_info?.registration_type?.replace('_', ' ')}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-300 block text-[10px]">GSTIN</span>
-                        <span className="text-white font-mono font-semibold">{selectedApp.business_info?.gstin}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-300 block text-[10px]">Industry</span>
-                        <span className="text-white">{selectedApp.business_info?.industry_type}</span>
-                      </div>
-                      <div className="col-span-2">
-                        <span className="text-slate-300 block text-[10px]">Promoter Email</span>
-                        <span className="text-slate-300">{selectedApp.sme_id?.email}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Column 2: Uploads Audit & Behavioural */}
-                <div className="space-y-4">
-                  {/* Documents Audit list */}
-                  <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
-                    <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1">Uploaded Credential Audit</h5>
-                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                      {selectedApp.documents && Object.entries(selectedApp.documents).map(([key, doc]) => (
-                        <div key={key} className="flex justify-between items-center bg-slate-950 p-2 rounded-xl border border-white/5">
-                          <span className="text-slate-400 capitalize truncate max-w-[130px]">{key.replace('_', ' ')}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] text-slate-300 font-mono">{(doc.size / (1024 * 1024)).toFixed(2)} MB</span>
-                            <button
-                              onClick={() => openPreview(doc)}
-                              className="text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-0.5"
-                            >
-                              Open <Eye className="w-3 h-3" />
-                            </button>
+                  {/* Grid detail blocks */}
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    {/* Column 1: Financial & Parameters */}
+                    <div className="space-y-4">
+                      {/* Loan Parameters */}
+                      <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
+                        <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1 flex justify-between">
+                          <span>Loan parameters</span>
+                          <span className="text-[10px] font-mono text-slate-300">Risk Score: {selectedApp.risk_score}</span>
+                        </h5>
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <span className="text-slate-300 block text-[10px]">Requested</span>
+                            <span className="text-white font-semibold font-mono">₹{selectedApp.amount?.toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-300 block text-[10px]">Tenure</span>
+                            <span className="text-white font-semibold">{selectedApp.tenure} Months</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-300 block text-[10px]">Purpose</span>
+                            <span className="text-white font-semibold capitalize">{selectedApp.purpose?.replace('_', ' ')}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-300 block text-[10px]">Monthly Turnover</span>
+                            <span className="text-white font-semibold font-mono">₹{selectedApp.revenue?.toLocaleString()}</span>
                           </div>
                         </div>
-                      ))}
+                      </div>
+
+                      {/* Business & Promoter details */}
+                      <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
+                        <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1">Entity structure</h5>
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <span className="text-slate-300 block text-[10px]">Legal Name</span>
+                            <span className="text-white font-semibold">{selectedApp.business_info?.legal_name}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-300 block text-[10px]">Structure</span>
+                            <span className="text-white capitalize">{selectedApp.business_info?.registration_type?.replace('_', ' ')}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-300 block text-[10px]">GSTIN</span>
+                            <span className="text-white font-mono font-semibold">{selectedApp.business_info?.gstin}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-300 block text-[10px]">Industry</span>
+                            <span className="text-white">{selectedApp.business_info?.industry_type}</span>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-slate-300 block text-[10px]">Promoter Email</span>
+                            <span className="text-slate-300">{selectedApp.sme_id?.email}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Column 2: Uploads Audit & Behavioural */}
+                    <div className="space-y-4">
+                      {/* Documents Audit list */}
+                      <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
+                        <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1">Uploaded Credential Audit</h5>
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                          {selectedApp.documents && Object.entries(selectedApp.documents).map(([key, doc]) => (
+                            <div key={key} className="flex justify-between items-center bg-slate-950 p-2 rounded-xl border border-white/5">
+                              <span className="text-slate-400 capitalize truncate max-w-[130px]">{key.replace('_', ' ')}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9px] text-slate-300 font-mono">{(doc.size / (1024 * 1024)).toFixed(2)} MB</span>
+                                <button
+                                  onClick={() => openPreview(doc)}
+                                  className="text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-0.5"
+                                >
+                                  Open <Eye className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Applicant Loan Motive & User Reasoning */}
+                      <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-3">
+                        <h5 className="font-bold text-slate-200 border-b border-white/5 pb-1 uppercase tracking-wider text-[10px]">
+                          Applicant Loan Motive & User Reasoning
+                        </h5>
+                        <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1">
+                          <div>
+                            <span className="text-slate-400 block text-[9px] uppercase tracking-wider font-semibold">Stated Purpose of Loan</span>
+                            <p className="text-white font-medium text-xs capitalize mt-0.5">{selectedApp.purpose?.replace('_', ' ')}</p>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px] uppercase tracking-wider font-semibold">Q1: Primary Operational or Inventory Challenges</span>
+                            <p className="text-slate-200 leading-relaxed italic text-[11px] mt-0.5">
+                              "{selectedApp.behavioural_questions?.business_challenges || 'No response provided'}"
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px] uppercase tracking-wider font-semibold">Q2: Cash Flow & Target Repayment Flow</span>
+                            <p className="text-slate-200 leading-relaxed italic text-[11px] mt-0.5">
+                              "{selectedApp.behavioural_questions?.repayment_plan || 'No response provided'}"
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px] uppercase tracking-wider font-semibold">Q3: Commercial Expansion Goals (12-24 Months)</span>
+                            <p className="text-slate-200 leading-relaxed italic text-[11px] mt-0.5">
+                              "{selectedApp.behavioural_questions?.future_goals || 'No response provided'}"
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-white/5">
+                            <span className="text-slate-400 text-[10px] font-semibold">Promoter Integrity Declaration Signed</span>
+                            <Badge className={selectedApp.behavioural_questions?.integrity_check ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px]" : "bg-red-500/10 text-red-400 border-red-500/20 text-[9px]"}>
+                              {selectedApp.behavioural_questions?.integrity_check ? "YES" : "NO"}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Behavioural evaluation */}
-                  <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
-                    <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1">Behavioural evaluation</h5>
-                    <div className="space-y-2.5 max-h-40 overflow-y-auto pr-1">
-                      <div>
-                        <span className="text-slate-300 block text-[9px] uppercase tracking-wider">Q1: Challenges</span>
-                        <p className="text-white leading-normal italic text-[11px]">"{selectedApp.behavioural_questions?.business_challenges}"</p>
-                      </div>
-                      <div>
-                        <span className="text-slate-300 block text-[9px] uppercase tracking-wider">Q2: Repayment flow</span>
-                        <p className="text-white leading-normal italic text-[11px]">"{selectedApp.behavioural_questions?.repayment_plan}"</p>
-                      </div>
+                  {/* STATUS CHANGE FORM SECTION */}
+                  {!['approved', 'rejected', 'disbursed'].includes(selectedApp.status) ? (
+                    <div className="bg-blue-600/[0.02] border border-blue-500/10 rounded-2xl p-5 space-y-4">
+                      <h4 className="font-bold text-white flex items-center gap-2 border-b border-white/5 pb-2 text-[11px] uppercase tracking-wider">
+                        <MessageSquare className="w-4 h-4 text-blue-400" />
+                        Transition Status & Log Notes
+                      </h4>
+
+                      {statusError && (
+                        <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-xl flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4" />
+                          <span>{statusError}</span>
+                        </div>
+                      )}
+
+                      <form onSubmit={handleStatusChangeSubmit} className="space-y-4">
+                        <div className="grid sm:grid-cols-2 gap-4">
+                          {/* Target status */}
+                          <div className="space-y-1.5">
+                            <label className="block font-semibold text-slate-300">Target status</label>
+                            <select
+                              value={nextStatus}
+                              onChange={(e) => {
+                                setNextStatus(e.target.value);
+                                setStatusError('');
+                              }}
+                              className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
+                            >
+                              <option value="">Choose status...</option>
+                              {getValidNextStatuses(selectedApp.status).map((st) => (
+                                <option key={st.value} value={st.value}>
+                                  {st.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Notes / Comment */}
+                          <div className="space-y-1.5">
+                            <label className="block font-semibold text-slate-300">Administrative Transition Notes</label>
+                            <input
+                              type="text"
+                              value={transitionNotes}
+                              onChange={(e) => setTransitionNotes(e.target.value)}
+                              placeholder="Type reason or notes..."
+                              className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Missing Document Selectors (Conditional) */}
+                        {nextStatus === 'missing_info' && (
+                          <div className="space-y-2 border-t border-white/5 pt-3 animate-fade-in">
+                            <span className="block font-semibold text-slate-300 text-[10px] uppercase tracking-wider flex items-center gap-1.5 text-red-400">
+                              <AlertTriangle className="w-4 h-4" />
+                              Select Missing/Corrupted Document Uploads
+                            </span>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {[
+                                { key: 'pan', label: 'PAN Card' },
+                                { key: 'aadhaar', label: 'Aadhaar Card' },
+                                { key: 'gst_certificate', label: 'GST Certificate' },
+                                { key: 'bank_statements', label: 'Bank Statements' },
+                                { key: 'itr', label: 'ITR Returns' },
+                                { key: 'balance_sheets', label: 'Balance Sheet' },
+                                { key: 'profit_loss', label: 'Profit & Loss' },
+                                { key: 'loan_documents', label: 'Sanction Letters' },
+                              ].map((doc) => (
+                                <div
+                                  key={doc.key}
+                                  onClick={() => toggleMissingDocCheckbox(doc.key)}
+                                  className={`p-2 border rounded-xl cursor-pointer text-center select-none transition-all ${
+                                    missingDocs.includes(doc.key)
+                                      ? 'bg-red-500/10 border-red-500/30 text-red-400 font-semibold'
+                                      : 'bg-slate-950 border-white/5 text-slate-400 hover:text-white'
+                                  }`}
+                                >
+                                  {doc.label}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex justify-end pt-2 border-t border-white/5">
+                          <button
+                            type="submit"
+                            disabled={submittingStatus}
+                            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white font-semibold rounded-xl text-xs transition-all flex items-center gap-1"
+                          >
+                            {submittingStatus ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                Transitioning...
+                              </>
+                            ) : (
+                              <>
+                                Save Transition
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </form>
                     </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* STATUS CHANGE FORM SECTION */}
-              {!['approved', 'rejected', 'disbursed'].includes(selectedApp.status) ? (
-                <div className="bg-blue-600/[0.02] border border-blue-500/10 rounded-2xl p-5 space-y-4">
-                  <h4 className="font-bold text-white flex items-center gap-2 border-b border-white/5 pb-2 text-[11px] uppercase tracking-wider">
-                    <MessageSquare className="w-4 h-4 text-blue-400" />
-                    Transition Status & Log Notes
-                  </h4>
-
-                  {statusError && (
-                    <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-xl flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4" />
-                      <span>{statusError}</span>
+                  ) : (
+                    <div className="bg-slate-950 border border-white/5 p-4 rounded-2xl flex items-center gap-2.5 text-slate-300">
+                      <CheckCircle className="w-5 h-5 text-slate-400" />
+                      <span className="font-medium italic">This application file is closed. No further transitions are available.</span>
                     </div>
                   )}
 
-                  <form onSubmit={handleStatusChangeSubmit} className="space-y-4">
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      {/* Target status */}
-                      <div className="space-y-1.5">
-                        <label className="block font-semibold text-slate-300">Target status</label>
-                        <select
-                          value={nextStatus}
-                          onChange={(e) => {
-                            setNextStatus(e.target.value);
-                            setStatusError('');
-                          }}
-                          className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
-                        >
-                          <option value="">Choose status...</option>
-                          {getValidNextStatuses(selectedApp.status).map((st) => (
-                            <option key={st.value} value={st.value}>
-                              {st.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Notes / Comment */}
-                      <div className="space-y-1.5">
-                        <label className="block font-semibold text-slate-300">Administrative Transition Notes</label>
-                        <input
-                          type="text"
-                          value={transitionNotes}
-                          onChange={(e) => setTransitionNotes(e.target.value)}
-                          placeholder="Type reason or notes..."
-                          className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all"
-                        />
-                      </div>
+                  {/* STATUS HISTORY ACTIVITY LOG */}
+                  <div className="border border-white/5 rounded-2xl overflow-hidden">
+                    <div
+                      onClick={() => setExpandedLogs(!expandedLogs)}
+                      className="bg-white/[0.01] hover:bg-white/[0.02] p-4 flex justify-between items-center cursor-pointer select-none transition-colors border-b border-white/5"
+                    >
+                      <span className="font-bold text-slate-300 flex items-center gap-2 text-[10px] uppercase tracking-wider">
+                        <History className="w-4 h-4 text-blue-400" />
+                        Expand Activity History Log ({historyLogs.length})
+                      </span>
+                      <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedLogs ? 'rotate-90' : ''}`} />
                     </div>
 
-                    {/* Missing Document Selectors (Conditional) */}
-                    {nextStatus === 'missing_info' && (
-                      <div className="space-y-2 border-t border-white/5 pt-3 animate-fade-in">
-                        <span className="block font-semibold text-slate-300 text-[10px] uppercase tracking-wider flex items-center gap-1.5 text-red-400">
-                          <AlertTriangle className="w-4 h-4" />
-                          Select Missing/Corrupted Document Uploads
-                        </span>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          {[
-                            { key: 'pan', label: 'PAN Card' },
-                            { key: 'aadhaar', label: 'Aadhaar Card' },
-                            { key: 'gst_certificate', label: 'GST Certificate' },
-                            { key: 'bank_statements', label: 'Bank Statements' },
-                            { key: 'itr', label: 'ITR Returns' },
-                            { key: 'balance_sheets', label: 'Balance Sheet' },
-                            { key: 'profit_loss', label: 'Profit & Loss' },
-                            { key: 'loan_documents', label: 'Sanction Letters' },
-                          ].map((doc) => (
-                            <div
-                              key={doc.key}
-                              onClick={() => toggleMissingDocCheckbox(doc.key)}
-                              className={`p-2 border rounded-xl cursor-pointer text-center select-none transition-all ${
-                                missingDocs.includes(doc.key)
-                                  ? 'bg-red-500/10 border-red-500/30 text-red-400 font-semibold'
-                                  : 'bg-slate-950 border-white/5 text-slate-400 hover:text-white'
-                              }`}
-                            >
-                              {doc.label}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    {expandedLogs && (
+                      <CardContent className="p-4 bg-slate-950/40 space-y-3.5 divide-y divide-white/5 max-h-60 overflow-y-auto">
+                        {loadingHistory ? (
+                          <div className="flex justify-center py-4">
+                            <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                          </div>
+                        ) : historyLogs.length > 0 ? (
+                          historyLogs.map((log, idx) => (
+                            <div key={log._id} className={`pt-3 first:pt-0 space-y-1.5`}>
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="text-slate-300 font-mono">
+                                  {new Date(log.created_at).toLocaleString()}
+                                </span>
+                                <span className="text-slate-300 font-semibold">
+                                  By: {log.changed_by_name} ({log.changed_by_model === 'SMEUser' ? 'Applicant' : 'Officer'})
+                                </span>
+                              </div>
+                              
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="bg-slate-900 border border-white/5 px-2 py-0.5 rounded text-[10px] capitalize text-slate-400">{log.from_status}</span>
+                                <ArrowRight className="w-3 h-3 text-slate-400" />
+                                <span className="bg-blue-600/10 border border-blue-500/20 px-2 py-0.5 rounded text-[10px] capitalize text-blue-400 font-semibold">{log.to_status}</span>
+                              </div>
 
-                    <div className="flex justify-end pt-2 border-t border-white/5">
-                      <button
-                        type="submit"
-                        disabled={submittingStatus}
-                        className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white font-semibold rounded-xl text-xs transition-all flex items-center gap-1"
-                      >
-                        {submittingStatus ? (
-                          <>
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            Transitioning...
-                          </>
+                              {log.notes && (
+                                <p className="text-slate-300 text-[11px] leading-normal bg-white/[0.005] border border-white/5 p-2 rounded-xl">
+                                  <span className="text-slate-300 font-bold mr-1">Notes:</span>
+                                  {log.notes}
+                                </p>
+                              )}
+
+                              {log.missing_docs && log.missing_docs.length > 0 && (
+                                <div className="flex flex-wrap gap-1 items-center">
+                                  <span className="text-[9px] text-red-400 font-semibold uppercase">Missing files flagged:</span>
+                                  {log.missing_docs.map((doc) => (
+                                    <Badge key={doc} variant="destructive" className="text-[8px] uppercase">{doc.replace('_', ' ')}</Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))
                         ) : (
-                          <>
-                            Save Transition
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </>
+                          <p className="text-center text-xs text-slate-400 py-4">No audit logs found for this case.</p>
                         )}
+                      </CardContent>
+                    )}
+                  </div>
+                </>
+              ) : activeReviewTab === 'extraction' ? (
+                <div className="space-y-6 animate-fade-in text-xs">
+                  {loadingExtraction ? (
+                    <div className="flex flex-col items-center justify-center py-16 gap-3">
+                      <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                      <p className="text-slate-400 font-medium">Retrieving AI parameter extraction result...</p>
+                    </div>
+                  ) : triggeringExtraction ? (
+                    <div className="flex flex-col items-center justify-center py-16 gap-3">
+                      <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+                      <p className="text-emerald-400 font-bold animate-pulse text-center">
+                        Running AI Parameter Extraction Pipeline...
+                      </p>
+                    </div>
+                  ) : extractionError ? (
+                    <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-5 rounded-2xl space-y-3">
+                      <div className="flex items-center gap-2 font-bold text-sm">
+                        <AlertCircle className="w-5 h-5 text-red-400" />
+                        <span>Extraction Pipeline Error</span>
+                      </div>
+                      <p className="leading-normal">{extractionError}</p>
+                      <button
+                        onClick={() => handleTriggerExtraction(selectedApp._id)}
+                        className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-white font-bold rounded-xl transition-all"
+                      >
+                        Run Extraction
                       </button>
                     </div>
-                  </form>
-                </div>
-              ) : (
-                <div className="bg-slate-950 border border-white/5 p-4 rounded-2xl flex items-center gap-2.5 text-slate-300">
-                  <CheckCircle className="w-5 h-5 text-slate-400" />
-                  <span className="font-medium italic">This application file is closed. No further transitions are available.</span>
-                </div>
-              )}
-
-              {/* STATUS HISTORY ACTIVITY LOG */}
-              <div className="border border-white/5 rounded-2xl overflow-hidden">
-                <div
-                  onClick={() => setExpandedLogs(!expandedLogs)}
-                  className="bg-white/[0.01] hover:bg-white/[0.02] p-4 flex justify-between items-center cursor-pointer select-none transition-colors border-b border-white/5"
-                >
-                  <span className="font-bold text-slate-300 flex items-center gap-2 text-[10px] uppercase tracking-wider">
-                    <History className="w-4 h-4 text-blue-400" />
-                    Expand Activity History Log ({historyLogs.length})
-                  </span>
-                  <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedLogs ? 'rotate-90' : ''}`} />
-                </div>
-
-                {expandedLogs && (
-                  <CardContent className="p-4 bg-slate-950/40 space-y-3.5 divide-y divide-white/5 max-h-60 overflow-y-auto">
-                    {loadingHistory ? (
-                      <div className="flex justify-center py-4">
-                        <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                  ) : !extractionResult ? (
+                    <div className="bg-slate-950/40 border border-white/5 p-8 rounded-3xl text-center space-y-4 flex flex-col items-center max-w-xl mx-auto">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-600/10 border border-blue-500/20 text-blue-400 flex items-center justify-center">
+                        <FileText className="w-6 h-6" />
                       </div>
-                    ) : historyLogs.length > 0 ? (
-                      historyLogs.map((log, idx) => (
-                        <div key={log._id} className={`pt-3 first:pt-0 space-y-1.5`}>
-                          <div className="flex justify-between items-center text-[10px]">
-                            <span className="text-slate-300 font-mono">
-                              {new Date(log.created_at).toLocaleString()}
-                            </span>
-                            <span className="text-slate-300 font-semibold">
-                              By: {log.changed_by_name} ({log.changed_by_model === 'SMEUser' ? 'Applicant' : 'Officer'})
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-white">Extraction Pending</h4>
+                        <p className="text-[11px] text-slate-400 leading-normal max-w-sm text-center">
+                          AI Parameter Extraction has not been executed on this file yet.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleTriggerExtraction(selectedApp._id)}
+                        className="px-4.5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all flex items-center gap-1.5"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        Run AI Parameter Extraction
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="grid sm:grid-cols-3 gap-4">
+                        <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between min-h-[90px]">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Overall AI Confidence</span>
+                          <div className="flex items-baseline gap-2 mt-2">
+                            <span className="text-3xl font-extrabold font-mono text-emerald-400">
+                              {extractionResult.overall_confidence != null 
+                                ? `${Math.round(extractionResult.overall_confidence * 100)}%`
+                                : 'N/A'}
                             </span>
                           </div>
-                          
-                          <div className="flex items-center gap-2 text-xs">
-                            <span className="bg-slate-900 border border-white/5 px-2 py-0.5 rounded text-[10px] capitalize text-slate-400">{log.from_status}</span>
-                            <ArrowRight className="w-3 h-3 text-slate-400" />
-                            <span className="bg-blue-600/10 border border-blue-500/20 px-2 py-0.5 rounded text-[10px] capitalize text-blue-400 font-semibold">{log.to_status}</span>
+                          <span className="text-[9px] text-slate-300">Extraction algorithm scoring</span>
+                        </div>
+
+                        <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between min-h-[90px]">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Missing Documents/Fields</span>
+                          <div className="mt-2">
+                            {extractionResult.missing_fields && extractionResult.missing_fields.length > 0 ? (
+                              <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-[9px] font-bold">
+                                {extractionResult.missing_fields.length} ITEMS MISSING
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px] font-bold">
+                                CLEAN FILE
+                              </Badge>
+                            )}
                           </div>
+                          <span className="text-[9px] text-slate-300">Parameters required by policy</span>
+                        </div>
 
-                          {log.notes && (
-                            <p className="text-slate-300 text-[11px] leading-normal bg-white/[0.005] border border-white/5 p-2 rounded-xl">
-                              <span className="text-slate-300 font-bold mr-1">Notes:</span>
-                              {log.notes}
-                            </p>
-                          )}
+                        <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between min-h-[90px]">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Extraction ID</span>
+                          <div className="mt-2 text-[10px] font-mono text-slate-300 truncate">
+                            {extractionResult.extraction_id || extractionResult.id || 'N/A'}
+                          </div>
+                          <span className="text-[9px] text-slate-300">PostgreSQL reference trace</span>
+                        </div>
+                      </div>
 
-                          {log.missing_docs && log.missing_docs.length > 0 && (
-                            <div className="flex flex-wrap gap-1 items-center">
-                              <span className="text-[9px] text-red-400 font-semibold uppercase">Missing files flagged:</span>
-                              {log.missing_docs.map((doc) => (
-                                <Badge key={doc} variant="destructive" className="text-[8px] uppercase">{doc.replace('_', ' ')}</Badge>
+                      {extractionResult.missing_fields && extractionResult.missing_fields.length > 0 && (
+                        <div className="bg-red-500/5 border border-red-500/10 p-4 rounded-2xl space-y-2">
+                          <span className="font-bold text-red-400 text-[10px] uppercase tracking-wider block">
+                            Flagged Missing Parameters
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {extractionResult.missing_fields.map((field) => (
+                              <Badge key={field} variant="destructive" className="text-[9px] uppercase font-semibold">
+                                {field.replace('_', ' ')}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div className="bg-white/[0.01] border border-white/5 p-5 rounded-2xl space-y-4">
+                          <h5 className="font-bold text-slate-200 border-b border-white/5 pb-2 uppercase tracking-wider text-[10px]">
+                            Identity Credentials (PAN/GSTIN/CIN)
+                          </h5>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">GSTIN</span>
+                              <span className="text-white font-mono font-semibold">{extractionResult.parameters?.gstin || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">PAN</span>
+                              <span className="text-white font-mono font-semibold">{extractionResult.parameters?.pan || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">CIN</span>
+                              <span className="text-white font-mono font-semibold">{extractionResult.parameters?.cin || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">LLPIN</span>
+                              <span className="text-white font-mono font-semibold">{extractionResult.parameters?.llpin || 'N/A'}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-white/[0.01] border border-white/5 p-5 rounded-2xl space-y-4">
+                          <h5 className="font-bold text-slate-200 border-b border-white/5 pb-2 uppercase tracking-wider text-[10px]">
+                            Financial parameters
+                          </h5>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">Annual Turnover</span>
+                              <span className="text-white font-semibold font-mono">
+                                {extractionResult.parameters?.annual_turnover != null
+                                  ? `₹${extractionResult.parameters.annual_turnover.toLocaleString()}`
+                                  : 'N/A'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">Net Profit</span>
+                              <span className="text-white font-semibold font-mono">
+                                {extractionResult.parameters?.net_profit != null
+                                  ? `₹${extractionResult.parameters.net_profit.toLocaleString()}`
+                                  : 'N/A'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">Total Liabilities</span>
+                              <span className="text-white font-semibold font-mono">
+                                {extractionResult.parameters?.total_liabilities != null
+                                  ? `₹${extractionResult.parameters.total_liabilities.toLocaleString()}`
+                                  : 'N/A'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">Avg Monthly Balance</span>
+                              <span className="text-white font-semibold font-mono">
+                                {extractionResult.parameters?.avg_monthly_balance != null
+                                  ? `₹${extractionResult.parameters.avg_monthly_balance.toLocaleString()}`
+                                  : 'N/A'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-white/[0.01] border border-white/5 p-5 rounded-2xl space-y-4">
+                          <h5 className="font-bold text-slate-200 border-b border-white/5 pb-2 uppercase tracking-wider text-[10px]">
+                            Promoter & Director details
+                          </h5>
+                          {extractionResult.parameters?.promoter_details && extractionResult.parameters.promoter_details.length > 0 ? (
+                            <div className="space-y-2">
+                              {extractionResult.parameters.promoter_details.map((promoter, idx) => (
+                                <div key={idx} className="bg-slate-950 p-2 border border-white/5 rounded-xl text-[11px]">
+                                  <span className="font-bold text-white block">{promoter.name || 'Unknown'}</span>
+                                  <div className="grid grid-cols-2 text-[10px] text-slate-400 mt-1">
+                                    <span>DIN: {promoter.din || 'N/A'}</span>
+                                    <span>Shareholding: {promoter.shareholding != null ? `${promoter.shareholding}%` : 'N/A'}</span>
+                                  </div>
+                                </div>
                               ))}
                             </div>
+                          ) : (
+                            <span className="text-slate-400 italic">No promoter details extracted</span>
                           )}
                         </div>
-                      ))
-                    ) : (
-                      <p className="text-center text-xs text-slate-400 py-4">No audit logs found for this case.</p>
-                    )}
-                  </CardContent>
-                )}
-              </div>
 
+                        <div className="bg-white/[0.01] border border-white/5 p-5 rounded-2xl space-y-4">
+                          <h5 className="font-bold text-slate-200 border-b border-white/5 pb-2 uppercase tracking-wider text-[10px]">
+                            Behavioural Risk & Debt Records
+                          </h5>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">Cheque Bounce Count</span>
+                              <span className="text-white font-semibold font-mono">
+                                {extractionResult.parameters?.cheque_bounce_count ?? 'N/A'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">Collateral details</span>
+                              <span className="text-white font-semibold truncate block max-w-[150px]">
+                                {extractionResult.parameters?.collateral_details && extractionResult.parameters.collateral_details.length > 0
+                                  ? extractionResult.parameters.collateral_details.map(c => c.type || c.description).join(', ')
+                                  : 'None'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="border-t border-white/5 pt-2">
+                            <span className="text-slate-400 block text-[10px] mb-1">Existing Loan Balances</span>
+                            {extractionResult.parameters?.loan_balances && extractionResult.parameters.loan_balances.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {extractionResult.parameters.loan_balances.map((loan, idx) => (
+                                  <Badge key={idx} className="bg-slate-900 border-white/5 text-[9px]">
+                                    {loan.bank || 'Bank'}: ₹{loan.amount?.toLocaleString()}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 italic block text-[11px]">No active external loans detected</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end pt-4 border-t border-white/5 gap-2">
+                        <button
+                          onClick={() => handleTriggerExtraction(selectedApp._id, true)}
+                          disabled={triggeringExtraction}
+                          className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl text-xs transition-all flex items-center gap-1.5"
+                        >
+                          <Sparkles className="w-4 h-4 text-emerald-400" />
+                          Force Re-run Parameter Extraction
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : activeReviewTab === 'chat' ? (
+                <div className="flex flex-col h-[600px] animate-fade-in text-xs border border-slate-700/50 rounded-xl overflow-hidden bg-slate-900/50">
+                  <div className="bg-slate-800/80 border-b border-slate-700/50 p-4 shrink-0 flex items-center justify-between">
+                    <div>
+                      <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-blue-400" />
+                        AI Document Q&A
+                      </h3>
+                      <p className="text-slate-400 mt-1">Ask questions about {selectedApp.business_info?.legal_name}'s extracted documents</p>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {chatMessages.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-2">
+                        <MessageSquare className="w-8 h-8 opacity-20" />
+                        <p>No messages yet. Ask a question about the loan documents.</p>
+                      </div>
+                    ) : (
+                      chatMessages.map((msg, idx) => (
+                        <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-[85%] rounded-2xl p-4 ${msg.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-bl-none'}`}>
+                            <p className="whitespace-pre-wrap leading-relaxed text-[13px]">{msg.content}</p>
+                            {msg.sources && msg.sources.length > 0 && (
+                              <div className="mt-3 pt-3 border-t border-slate-700/50 flex flex-wrap gap-2">
+                                <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Sources:</span>
+                                {msg.sources.map((src, i) => (
+                                  <span key={i} className="text-[10px] bg-slate-900/50 px-2 py-1 rounded text-slate-300 border border-slate-700/50">{src}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    {isChatting && (
+                      <div className="flex justify-start">
+                        <div className="bg-slate-800 border border-slate-700 rounded-2xl rounded-bl-none p-4 flex items-center gap-2 text-slate-400">
+                          <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                          <span>AI is analyzing documents...</span>
+                        </div>
+                      </div>
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
+                  <div className="p-4 bg-slate-800/80 border-t border-slate-700/50 shrink-0">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                        placeholder={chatRetryAfter > 0 ? `Please wait ${chatRetryAfter}s...` : "e.g. What is the net profit in the last year?"}
+                        className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+                        disabled={isChatting || chatRetryAfter > 0}
+                      />
+                      <button
+                        onClick={handleSendMessage}
+                        disabled={isChatting || !chatInput.trim() || chatRetryAfter > 0}
+                        className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 rounded-xl font-bold flex items-center justify-center transition-all"
+                      >
+                        {chatRetryAfter > 0 ? chatRetryAfter : "Send"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6 animate-fade-in text-xs">
+                  {loadingAssessment ? (
+                    <div className="flex flex-col items-center justify-center py-16 gap-3">
+                      <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                      <p className="text-slate-400 font-medium">Retrieving stored AI credit assessment...</p>
+                    </div>
+                  ) : assessingLoan ? (
+                    <div className="flex flex-col items-center justify-center py-16 gap-3">
+                      <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+                      <p className="text-emerald-400 font-bold animate-pulse text-center">
+                        Running AI Credit Underwriting Engine...
+                      </p>
+                      <p className="text-[12px] text-slate-300 max-w-sm text-center font-mono bg-slate-900 border border-emerald-500/20 px-4 py-2 rounded-lg mt-2">
+                        {AGENT_TRACE_LOGS[agentTraceIndex]}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-2">This process takes up to 60 seconds.</p>
+                    </div>
+                  ) : reevaluatingLoan ? (
+                    <div className="flex flex-col items-center justify-center py-16 gap-3">
+                      <Loader2 className="w-8 h-8 animate-spin text-teal-400 animate-duration-1000" />
+                      <p className="text-teal-400 font-bold animate-pulse text-center">
+                        Re-running Agentic Underwriting Workflow...
+                      </p>
+                      <p className="text-[12px] text-slate-300 max-w-sm text-center font-mono bg-slate-900 border border-teal-500/20 px-4 py-2 rounded-lg mt-2">
+                        {AGENT_TRACE_LOGS[agentTraceIndex]}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-2">This process takes up to 60 seconds.</p>
+                    </div>
+                  ) : assessmentError ? (
+                    <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-5 rounded-2xl space-y-3">
+                      <div className="flex items-center gap-2 font-bold text-sm">
+                        <AlertCircle className="w-5 h-5 text-red-400" />
+                        <span>Credit Audit Error</span>
+                      </div>
+                      <p className="leading-normal">{assessmentError}</p>
+                      <button
+                        onClick={() => handleAssessLoan(selectedApp._id)}
+                        className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-white font-bold rounded-xl transition-all"
+                      >
+                        Retry Underwriting Assessment
+                      </button>
+                    </div>
+                  ) : !underwritingAssessment ? (
+                    <div className="bg-slate-950/40 border border-white/5 p-8 rounded-3xl text-center space-y-4 flex flex-col items-center max-w-xl mx-auto">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-600/10 border border-blue-500/20 text-blue-400 flex items-center justify-center animate-bounce animate-duration-1000">
+                        <Sparkles className="w-6 h-6" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-white">Assessment Report Pending</h4>
+                        <p className="text-[11px] text-slate-400 leading-normal max-w-sm text-center">
+                          This loan application has not undergone AI Credit Underwriting. Run policy checks and risk rating calculations.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap justify-center gap-3">
+                        <button
+                          onClick={() => handleAssessLoan(selectedApp._id)}
+                          className="px-4.5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all flex items-center gap-1.5"
+                        >
+                          <ShieldCheck className="w-4 h-4" />
+                          Run AI Underwriting Assessment
+                        </button>
+                        <button
+                          onClick={() => handleReevaluateLoan(selectedApp._id)}
+                          className="px-4.5 py-2.5 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 border border-white/5"
+                        >
+                          <Sparkles className="w-4 h-4 text-emerald-400" />
+                          Re-evaluate End-to-End
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    // ASSESSMENT REPORT LOADED
+                    <div className="space-y-6">
+                      {/* Metric cards row */}
+                      <div className="grid sm:grid-cols-3 gap-4">
+                        <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between min-h-[90px]">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">AI Credit Score</span>
+                          <div className="flex items-baseline gap-2 mt-2">
+                            <span className={`text-3xl font-extrabold font-mono ${
+                              underwritingAssessment.risk_level === 'LOW' ? 'text-emerald-400' :
+                              underwritingAssessment.risk_level === 'MEDIUM' ? 'text-amber-400' :
+                              'text-red-400'
+                            }`}>
+                              {underwritingAssessment.risk_score}
+                            </span>
+                            <span className="text-slate-300 font-medium">/ 850</span>
+                          </div>
+                          <span className={`text-[10px] font-bold mt-1 uppercase ${
+                            underwritingAssessment.risk_level === 'LOW' ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' :
+                            underwritingAssessment.risk_level === 'MEDIUM' ? 'text-amber-500 bg-amber-500/10 border-amber-500/20' :
+                            'text-red-500 bg-red-500/10 border-red-500/20'
+                          } border px-2 py-0.5 rounded-full w-fit`}>
+                            {underwritingAssessment.risk_level} RISK
+                          </span>
+                        </div>
+
+                        <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between min-h-[90px]">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Lending Recommendation</span>
+                          <div className="mt-2">
+                            <span className={`text-xs font-bold uppercase tracking-wide px-3 py-1.5 rounded-xl border ${
+                              underwritingAssessment.approval_recommendation === 'RECOMMEND_APPROVE' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                              underwritingAssessment.approval_recommendation === 'RECOMMEND_REJECT' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+                              'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                            }`}>
+                              {(underwritingAssessment.approval_recommendation || '').replace('_', ' ')}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-slate-300 mt-2">
+                            Final decision remains with Bank Admin.
+                          </span>
+                        </div>
+
+                        <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between min-h-[90px] sm:col-span-1">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Assessment Status</span>
+                          <div className="mt-2 text-xs font-medium text-slate-200 leading-normal line-clamp-3">
+                            {underwritingAssessment.eligibility_summary}
+                          </div>
+                          <span className="text-[9px] text-slate-300">
+                            Evaluated: {underwritingAssessment.assessed_at ? new Date(underwritingAssessment.assessed_at).toLocaleDateString() : new Date().toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Rejection notice (if recommendation is REJECT) */}
+                      {underwritingAssessment.approval_recommendation === 'RECOMMEND_REJECT' && underwritingAssessment.rejection_explanation && (
+                        <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-2xl flex items-start gap-3">
+                          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5 text-red-400" />
+                          <div>
+                            <span className="font-bold text-xs uppercase tracking-wider block">AI Rejection Explanation</span>
+                            <p className="text-[11px] text-slate-300 mt-1 leading-normal">
+                              {underwritingAssessment.rejection_explanation}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Credit Policy Checklist Grid */}
+                      <div className="space-y-3">
+                        <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                          Mandatory Credit Policy Audit Checklist
+                        </h4>
+
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                          {[
+                            { title: 'Turnover Eligibility', data: underwritingAssessment.checks?.turnover_eligibility },
+                            { title: 'GST Consistency Check', data: underwritingAssessment.checks?.gst_consistency },
+                            { title: 'Outstanding Debt/Liabilities', data: underwritingAssessment.checks?.existing_liabilities },
+                            { title: 'Cheque Bounce Patterns', data: underwritingAssessment.checks?.cheque_bounce_patterns },
+                            { title: 'Suspicious Ledger Activity', data: underwritingAssessment.checks?.suspicious_behaviour },
+                          ].map((check, idx) => {
+                            const status = check.data?.status || 'WARNING';
+                            const details = check.data?.details || 'Check details not available';
+                            return (
+                              <div key={idx} className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between gap-3">
+                                <div className="flex justify-between items-start gap-2">
+                                  <span className="text-xs font-semibold text-white block">{check.title}</span>
+                                  <Badge className={
+                                    status === 'PASS' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px]' :
+                                    status === 'FAIL' ? 'bg-red-500/10 text-red-400 border-red-500/20 text-[9px]' :
+                                    'bg-amber-500/10 text-amber-400 border-amber-500/20 text-[9px]'
+                                  }>
+                                    {status}
+                                  </Badge>
+                                </div>
+                                <p className="text-slate-300 text-[11px] leading-normal">{details}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Bank Policy Compliance Audit */}
+                      <div className="space-y-3 pt-2">
+                        <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                          <ShieldAlert className="w-4 h-4 text-amber-400" />
+                          Confidential Bank Policy Compliance Audit
+                        </h4>
+
+                        <div className="space-y-3">
+                          {(() => {
+                            const policyAudits = underwritingAssessment.policy_audits || policies.map(policy => {
+                              let checkData = null;
+                              const titleLower = policy.title.toLowerCase();
+                              if (titleLower.includes('underwriting') || titleLower.includes('sme')) {
+                                checkData = underwritingAssessment.checks?.turnover_eligibility;
+                              } else if (titleLower.includes('fraud') || titleLower.includes('kyc')) {
+                                checkData = underwritingAssessment.checks?.gst_consistency || underwritingAssessment.checks?.suspicious_behaviour;
+                              } else if (titleLower.includes('exposure') || titleLower.includes('appetite') || titleLower.includes('collateral')) {
+                                checkData = underwritingAssessment.checks?.existing_liabilities;
+                              }
+                              
+                              return {
+                                policy_id: policy.id || policy._id,
+                                policy_title: policy.title,
+                                status: checkData?.status || 'WARNING',
+                                details: checkData?.details || `Compliance verification details pending.`
+                              };
+                            });
+
+                            if (!policyAudits || policyAudits.length === 0) {
+                              return <p className="text-slate-400 italic text-[11px] bg-slate-950 p-4 border border-white/5 rounded-2xl">No bank policies registered to audit against.</p>;
+                            }
+
+                            return policyAudits.map((audit, idx) => {
+                              const policyId = audit.policy_id;
+                              const originalPolicy = policies.find(p => (p.id || p._id) === policyId);
+                              const description = originalPolicy?.description || "Bank underwriting directive limit";
+                              const status = audit.status || 'WARNING';
+
+                              return (
+                                <div key={idx} className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col md:flex-row justify-between gap-4">
+                                  <div className="space-y-2 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-semibold text-white">{audit.policy_title}</span>
+                                      <Badge className={
+                                        status === 'PASS' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px]' :
+                                        status === 'FAIL' ? 'bg-red-500/10 text-red-400 border-red-500/20 text-[9px]' :
+                                        'bg-amber-500/10 text-amber-400 border-amber-500/20 text-[9px]'
+                                      }>
+                                        {status}
+                                      </Badge>
+                                    </div>
+                                    <p className="text-slate-400 text-[10px] italic">{description}</p>
+                                    <div className="bg-white/[0.02] border border-white/5 p-2.5 rounded-xl text-slate-300 text-[11px]">
+                                      <strong>AI Findings:</strong> {audit.details}
+                                    </div>
+                                  </div>
+
+                                  {(status === 'FAIL' || status === 'WARNING') && !['approved', 'rejected', 'disbursed'].includes(selectedApp.status) && (
+                                    <div className="flex flex-row md:flex-col justify-end gap-2 shrink-0 md:w-48 align-middle self-center">
+                                      <button
+                                        onClick={() => handleNotifyPolicyIssue(audit.policy_title, audit.details)}
+                                        disabled={sendingPolicyNotification[audit.policy_title]}
+                                        className="w-full px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-1.5"
+                                      >
+                                        {sendingPolicyNotification[audit.policy_title] ? (
+                                          <>
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                            <span>Notifying...</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <AlertCircle className="w-3.5 h-3.5" />
+                                            <span>Notify SME User</span>
+                                          </>
+                                        )}
+                                      </button>
+                                      <button
+                                        onClick={() => handleBypassPolicyApprove(audit.policy_title, audit.details)}
+                                        className="w-full px-3 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-1.5"
+                                      >
+                                        <ShieldCheck className="w-3.5 h-3.5" />
+                                        <span>Bypass & Approve</span>
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
+
+                      {/* Explainable Reasoning */}
+                      <div className="space-y-2">
+                        <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                          <MessageSquare className="w-4 h-4 text-blue-400" />
+                          Explainable Credit Reasoning & Audit Trail
+                        </h4>
+                        <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl text-slate-300 leading-relaxed text-[11px] space-y-2">
+                          <p className="whitespace-pre-line">{underwritingAssessment.reasoning}</p>
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex justify-end pt-4 border-t border-white/5 gap-3">
+                        <button
+                          onClick={() => handleAssessLoan(selectedApp._id)}
+                          disabled={assessingLoan || reevaluatingLoan}
+                          className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl text-xs transition-all flex items-center gap-1.5 border border-white/5"
+                        >
+                          <Sparkles className="w-4.5 h-4.5 text-blue-400" />
+                          Re-run Underwriting Assessment
+                        </button>
+                        <button
+                          onClick={() => handleReevaluateLoan(selectedApp._id)}
+                          disabled={assessingLoan || reevaluatingLoan}
+                          className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs transition-all flex items-center gap-1.5"
+                        >
+                          <Sparkles className="w-4.5 h-4.5 text-emerald-400 animate-pulse" />
+                          Re-evaluate End-to-End (Rerun Agentic Workflow)
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

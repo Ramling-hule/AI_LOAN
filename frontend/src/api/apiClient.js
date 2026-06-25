@@ -7,32 +7,18 @@ import { useAuthStore } from '@/store/authStore.js';
 
 const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/v1',
-  timeout: 30000,
+  timeout: 600000, // 10 min — Ollama inference can be slow on CPU
   withCredentials: true, // send cookies on every request by default
   headers: { 'Content-Type': 'application/json' },
 });
 
-const getCookie = (name) => {
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop().split(';').shift();
-  return null;
-};
 
-// ── Request Interceptor — inject access token & CSRF token ─────────────────────
+// ── Request Interceptor — inject access token ────────────────────────────────────────
 apiClient.interceptors.request.use(
   (config) => {
     const { accessToken } = useAuthStore.getState();
     if (accessToken) {
       config.headers.Authorization = `Bearer ${accessToken}`;
-    }
-
-    // Inject CSRF token for state-mutating requests
-    if (['post', 'put', 'delete', 'patch'].includes(config.method?.toLowerCase())) {
-      const csrfToken = getCookie('csrfToken');
-      if (csrfToken) {
-        config.headers['x-csrf-token'] = csrfToken;
-      }
     }
     return config;
   },
@@ -59,7 +45,11 @@ apiClient.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Do NOT intercept 401s from auth endpoints (login, register, mfa, refresh).
+    // Let the component handle the error directly so we can show "Invalid password", etc.
+    const isAuthEndpoint = originalRequest.url?.includes('/auth/');
+
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       if (isRefreshing) {
         // Queue requests while refresh is in-flight
         return new Promise((resolve, reject) => {

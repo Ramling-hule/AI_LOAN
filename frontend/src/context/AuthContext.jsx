@@ -20,20 +20,40 @@ export function AuthProvider({ children }) {
   // ── On mount: attempt silent token refresh ──────────────────────────────
   useEffect(() => {
     const tryRefresh = async () => {
-      // If we have a persisted user but no access token, try to refresh silently
-      if (user && !accessToken) {
+      // Small delay lets a just-completed MFA login's setAuth() settle in store
+      // before this check runs — prevents a race condition on navigation.
+      await new Promise((r) => setTimeout(r, 50));
+
+      const { user: currentUser, accessToken: currentToken } = useAuthStore.getState();
+
+      // If we already have both user + token (e.g. just completed MFA login),
+      // skip the refresh entirely — no need to hit the network.
+      if (currentToken) {
+        setIsInitializing(false);
+        return;
+      }
+
+      if (currentUser && !currentToken) {
         try {
           const { data } = await authApi.refresh();
           useAuthStore.getState().setAccessToken(data.data.accessToken);
-        } catch {
-          // Refresh failed — clear stale user data
-          clearAuth();
+        } catch (err) {
+          // Only clear auth on definitive rejection (401/403).
+          // Network errors or 5xx should NOT log the user out — they may
+          // have a valid session that is temporarily unreachable.
+          const status = err?.response?.status;
+          if (status === 401 || status === 403) {
+            clearAuth();
+          }
+          // Otherwise: keep the user state intact; the 401 interceptor in
+          // apiClient.js will handle re-auth when a protected request is made.
         }
       }
       setIsInitializing(false);
     };
     tryRefresh();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // ── SME login ──────────────────────────────────────────────────────────
   const loginSME = useCallback(async (credentials) => {

@@ -55,6 +55,7 @@ export default function SMEDashboard() {
   const [selectedUploadAppId, setSelectedUploadAppId] = useState('');
   const [selectedUploadDocType, setSelectedUploadDocType] = useState('bank_statements');
   const [isUploadingDocCenter, setIsUploadingDocCenter] = useState(false);
+  const [vectorizingDocs, setVectorizingDocs] = useState({});
 
   // Bank Accounts & Stepper States
   const [linkedAccounts, setLinkedAccounts] = useState([]);
@@ -94,14 +95,21 @@ export default function SMEDashboard() {
           loanApi.getAll(),
         ]);
         setPartnerBanks(banksRes.data.data);
-        setApplications(appsRes.data.data);
-        if (appsRes.data.data.length > 0) {
-          setSelectedAppId(appsRes.data.data[0].appId);
-          setSelectedUploadAppId(appsRes.data.data[0]._id);
+        const apps = appsRes.data.data?.docs ?? appsRes.data.data ?? [];
+        setApplications(Array.isArray(apps) ? apps : []);
+        const nonDrafts = apps.filter((a) => a.status !== 'draft');
+        if (nonDrafts.length > 0) {
+          setSelectedAppId(nonDrafts[0].appId || nonDrafts[0].app_id);
+        } else if (apps.length > 0) {
+          setSelectedAppId(apps[0].appId || apps[0].app_id);
+        }
+        if (apps.length > 0) {
+          setSelectedUploadAppId(apps[0]._id || apps[0].id);
         }
         await fetchAccounts();
       } catch (err) {
         console.error('Failed to load dashboard data:', err);
+
       } finally {
         setLoading(false);
       }
@@ -129,7 +137,7 @@ export default function SMEDashboard() {
   );
 
   const nonDraftApps = applications.filter((a) => a.status !== 'draft');
-  const activeApp = nonDraftApps.find((a) => a.appId === selectedAppId) || nonDraftApps[0] || null;
+  const activeApp = nonDraftApps.find((a) => (a.appId || a.app_id) === selectedAppId) || nonDraftApps[0] || null;
 
   const outstandingFunding = applications
     .filter((a) => ['approved', 'disbursed'].includes(a.status))
@@ -144,10 +152,11 @@ export default function SMEDashboard() {
     if (!appId) return;
     try {
       setLoadingHistory(true);
-      const app = applications.find((a) => a.appId === appId);
+      const app = applications.find((a) => (a.appId || a.app_id) === appId);
       if (!app) return;
-      const { data } = await loanApi.getHistory(app._id);
-      setActiveAppHistory(data.data);
+      // Use the UUID id (not appId like APP-XXXX) for the API call
+      const { data } = await loanApi.getHistory(app.id || app._id);
+      setActiveAppHistory(Array.isArray(data.data) ? data.data : []);
     } catch (err) {
       console.error('Failed to fetch loan history:', err);
     } finally {
@@ -196,11 +205,49 @@ export default function SMEDashboard() {
     if (!file || !activeApp) return;
     setUploadingMissingDocs((prev) => ({ ...prev, [docType]: true }));
     try {
-      await loanApi.uploadDocument(activeApp._id, docType, file);
-      // Reload applications to get latest status (it might auto-transition to submitted)
+      const res = await loanApi.uploadDocument(activeApp._id, docType, file);
+      const uploadedDoc = res.data?.data;
+      const jobId = uploadedDoc?.ocr_job_id;
+
+      // Reload applications to get latest status
       const appsRes = await loanApi.getAll();
       setApplications(appsRes.data.data);
-      alert(`Successfully uploaded missing ${DOC_LABELS[docType] || docType}.`);
+
+      if (jobId) {
+        setVectorizingDocs((prev) => ({ ...prev, [docType]: 'Processing OCR & AI Vectorization...' }));
+        
+        let attempts = 0;
+        const interval = setInterval(async () => {
+          attempts++;
+          try {
+            const statusRes = await loanApi.getOcrJobStatus(jobId);
+            const jobStatus = statusRes.data?.data;
+            
+            if (jobStatus?.is_vectorized) {
+              clearInterval(interval);
+              setVectorizingDocs((prev) => {
+                const copy = { ...prev };
+                delete copy[docType];
+                return copy;
+              });
+              // Reload applications to get final status transitions
+              const finalApps = await loanApi.getAll();
+              setApplications(finalApps.data.data);
+            } else if (jobStatus?.status === 'failed' || jobStatus?.vectorization_error || attempts > 60) {
+              clearInterval(interval);
+              setVectorizingDocs((prev) => ({
+                ...prev,
+                [docType]: `Failed: ${jobStatus?.vectorization_error || 'OCR/Vectorization failed'}`,
+              }));
+            }
+          } catch (pollErr) {
+            console.error('Error polling OCR status:', pollErr);
+            if (attempts > 60) clearInterval(interval);
+          }
+        }, 3000);
+      } else {
+        alert(`Successfully uploaded missing ${DOC_LABELS[docType] || docType}.`);
+      }
     } catch (err) {
       console.error(err);
       alert(err.response?.data?.message || `Failed to upload ${DOC_LABELS[docType] || docType}`);
@@ -911,10 +958,10 @@ export default function SMEDashboard() {
             </div>
 
             {/* Stepper Selection */}
-            {applications.length > 0 ? (
+            {nonDraftApps.length > 0 ? (
               <>
                 <div className="flex gap-2 flex-wrap">
-                  {applications.map((a) => (
+                  {nonDraftApps.map((a) => (
                     <button
                       key={a.appId}
                       onClick={() => setSelectedAppId(a.appId)}
@@ -931,7 +978,7 @@ export default function SMEDashboard() {
                 </div>
 
                 {/* MISSING DOCUMENTS PROMPT */}
-                {activeApp.status === 'missing_info' && (
+                {activeApp && activeApp.status === 'missing_info' && (
                   <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-5 space-y-4">
                     <div className="flex items-start gap-3">
                       <AlertCircle className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
@@ -972,6 +1019,11 @@ export default function SMEDashboard() {
                                   <Loader2 className="w-4 h-4 animate-spin" />
                                   <span>Uploading...</span>
                                 </div>
+                              ) : vectorizingDocs[docKey] ? (
+                                <div className="flex flex-col items-center justify-center gap-1 py-1 text-[10px] text-emerald-400 font-medium">
+                                  <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                                  <span className="text-center">{vectorizingDocs[docKey]}</span>
+                                </div>
                               ) : (
                                 <label className="flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl cursor-pointer transition-all text-center">
                                   <span>Choose File</span>
@@ -991,6 +1043,29 @@ export default function SMEDashboard() {
                           </div>
                         );
                       })}
+                    </div>
+                    
+                    <div className="flex flex-col sm:flex-row justify-between items-center gap-4 border-t border-white/5 pt-4 mt-2">
+                      <p className="text-[11px] text-slate-400">
+                        Uploaded everything? If the status has not updated automatically, trigger a manual recheck or resubmit the application.
+                      </p>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await loanApi.changeStatus(activeApp.id || activeApp._id, 'submitted', 'Manual resubmission trigger by applicant.');
+                            const appsRes = await loanApi.getAll();
+                            const apps = appsRes.data.data?.docs ?? appsRes.data.data ?? [];
+                            setApplications(Array.isArray(apps) ? apps : []);
+                            alert('Application resubmitted successfully. The extraction pipeline has been queued.');
+                          } catch (err) {
+                            alert(err.response?.data?.message || 'Failed to resubmit application.');
+                          }
+                        }}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 self-end sm:self-auto"
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                        Resubmit Application
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1099,8 +1174,8 @@ export default function SMEDashboard() {
                           <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
                         </div>
                       ) : activeAppHistory.length > 0 ? (
-                        activeAppHistory.map((log) => (
-                          <div key={log._id} className="pt-4 first:pt-0 space-y-2">
+                        activeAppHistory.map((log, logIdx) => (
+                          <div key={log.id || log._id || logIdx} className="pt-4 first:pt-0 space-y-2">
                             <div className="flex justify-between items-center text-[10px]">
                               <span className="text-slate-300 font-mono">
                                 {new Date(log.created_at).toLocaleString()}

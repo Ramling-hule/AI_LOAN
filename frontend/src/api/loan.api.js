@@ -28,5 +28,7 @@ export const loanApi = {
   deleteDocument: (id, documentType) => apiClient.delete(`/loans/draft/${id}/upload/${documentType}`),
   changeStatus: (id, toStatus, notes = '', missingDocs = []) =>
     apiClient.post(`/loans/${id}/status`, { toStatus, notes, missingDocs }),
+  chatWithLoan: (id, query) => apiClient.post(`/loans/draft/${id}/chat`, { query }),
   getHistory: (id) => apiClient.get(`/loans/${id}/history`),
+  getOcrJobStatus: (jobId) => apiClient.get(`/ocr/jobs/${jobId}`),
 };

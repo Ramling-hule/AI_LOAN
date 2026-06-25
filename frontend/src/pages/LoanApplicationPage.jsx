@@ -233,7 +233,7 @@ export default function LoanApplicationPage() {
       if (!currentId) {
         // Initialize Draft
         const res = await loanApi.createDraft(formData.bank_name);
-        currentId = res.data.data._id;
+        currentId = res.data.data._id ?? res.data.data.id;
         setDraftId(currentId);
       }
 
@@ -311,7 +311,7 @@ export default function LoanApplicationPage() {
           return;
         }
         const res = await loanApi.createDraft(formData.bank_name);
-        currentId = res.data.data._id;
+        currentId = res.data.data._id ?? res.data.data.id;
         setDraftId(currentId);
       }
 
@@ -477,6 +477,27 @@ export default function LoanApplicationPage() {
             <span className="text-[10px] text-slate-300 block">Drag & drop or Click to upload PDF, Image, Excel</span>
           </div>
         </label>
+        <button
+          type="button"
+          onClick={async (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            try {
+              setErrorMsg('');
+              const response = await fetch(`/mock-docs/${docType}.pdf`);
+              if (!response.ok) throw new Error('Demo document not found');
+              const blob = await response.blob();
+              const file = new File([blob], `${docType}_mock.pdf`, { type: 'application/pdf' });
+              await handleFileUpload(docType, file);
+            } catch (err) {
+              console.error('Failed to load demo document:', err);
+              setErrorMsg(`Failed to load demo document for ${docType}`);
+            }
+          }}
+          className="mt-3.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 hover:border-blue-500/30 text-blue-400 hover:text-blue-300 rounded-lg text-[10px] font-semibold transition-all inline-flex items-center gap-1 cursor-pointer"
+        >
+          <Sparkles className="w-3 h-3" /> Use Demo Document
+        </button>
       </div>
     );
   };
@@ -615,12 +636,32 @@ export default function LoanApplicationPage() {
               {/* ── STEP 1: Business Information ── */}
               {currentStep === 1 && (
                 <div className="space-y-4 animate-fade-in">
-                  <div className="space-y-1">
-                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                      <Building2 className="w-5.5 h-5.5 text-blue-400" />
-                      1. Business Profile Details
-                    </h2>
-                    <p className="text-slate-400 text-xs">Enter legal registration details and associate partner lender.</p>
+                  <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                    <div className="space-y-1">
+                      <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                        <Building2 className="w-5.5 h-5.5 text-blue-400" />
+                        1. Business Profile Details
+                      </h2>
+                      <p className="text-slate-400 text-xs">Enter legal registration details and associate partner lender.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData(prev => ({
+                          ...prev,
+                          business_info: {
+                            legal_name: 'TechNova Solutions Pvt Ltd',
+                            registration_type: 'pvt_ltd',
+                            gstin: '27AAAHA8392M1ZA',
+                            incorporation_date: '2022-03-15',
+                            industry_type: 'AI Software & IT Services',
+                          }
+                        }));
+                      }}
+                      className="px-2.5 py-1 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 hover:text-blue-300 rounded-lg text-[10px] font-semibold transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3" /> Autofill Demo
+                    </button>
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-4">
@@ -711,12 +752,31 @@ export default function LoanApplicationPage() {
               {/* ── STEP 2: Financial Information ── */}
               {currentStep === 2 && (
                 <div className="space-y-4 animate-fade-in">
-                  <div className="space-y-1">
-                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                      <Calculator className="w-5.5 h-5.5 text-blue-400" />
-                      2. Corporate Financial Details
-                    </h2>
-                    <p className="text-slate-400 text-xs">Enter your audited financial stats for initial score check.</p>
+                  <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                    <div className="space-y-1">
+                      <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                        <Calculator className="w-5.5 h-5.5 text-blue-400" />
+                        2. Corporate Financial Details
+                      </h2>
+                      <p className="text-slate-400 text-xs">Enter your audited financial stats for initial score check.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData(prev => ({
+                          ...prev,
+                          financial_info: {
+                            annual_turnover: 4200000,
+                            net_profit: 1000000,
+                            existing_loans_count: 1,
+                            existing_loan_emi: 53500,
+                          }
+                        }));
+                      }}
+                      className="px-2.5 py-1 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 hover:text-blue-300 rounded-lg text-[10px] font-semibold transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3" /> Autofill Demo
+                    </button>
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-4">
@@ -770,12 +830,29 @@ export default function LoanApplicationPage() {
               {/* ── STEP 3: Loan Details ── */}
               {currentStep === 3 && (
                 <div className="space-y-4 animate-fade-in">
-                  <div className="space-y-1">
-                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                      <Calculator className="w-5.5 h-5.5 text-blue-400" />
-                      3. Loan Request Parameters
-                    </h2>
-                    <p className="text-slate-400 text-xs">Specify your funding requirements.</p>
+                  <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                    <div className="space-y-1">
+                      <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                        <Calculator className="w-5.5 h-5.5 text-blue-400" />
+                        3. Loan Request Parameters
+                      </h2>
+                      <p className="text-slate-400 text-xs">Specify your funding requirements.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData(prev => ({
+                          ...prev,
+                          amount: 1000000,
+                          tenure: 12,
+                          purpose: 'working_capital',
+                          revenue: 350000,
+                        }));
+                      }}
+                      className="px-2.5 py-1 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 hover:text-blue-300 rounded-lg text-[10px] font-semibold transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3" /> Autofill Demo
+                    </button>
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-4">
@@ -891,12 +968,31 @@ export default function LoanApplicationPage() {
               {/* ── STEP 7: Behavioural Evaluation ── */}
               {currentStep === 7 && (
                 <div className="space-y-4 animate-fade-in">
-                  <div className="space-y-1">
-                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                      <Sparkles className="w-5.5 h-5.5 text-blue-400" />
-                      7. Behavioural Underwriting Questions
-                    </h2>
-                    <p className="text-slate-400 text-xs">Provide business context questions to run final assessment.</p>
+                  <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                    <div className="space-y-1">
+                      <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                        <Sparkles className="w-5.5 h-5.5 text-blue-400" />
+                        7. Behavioural Underwriting Questions
+                      </h2>
+                      <p className="text-slate-400 text-xs">Provide business context questions to run final assessment.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData(prev => ({
+                          ...prev,
+                          behavioural_questions: {
+                            business_challenges: 'We are facing temporary working capital constraints due to longer billing cycles with corporate clients.',
+                            repayment_plan: 'We will service the EMI from AWS and IT services receivables, which are settled monthly.',
+                            future_goals: 'We target to scale our engineering capacity and expand operations to Bangalore next year.',
+                            integrity_check: true,
+                          }
+                        }));
+                      }}
+                      className="px-2.5 py-1 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 hover:text-blue-300 rounded-lg text-[10px] font-semibold transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3" /> Autofill Demo
+                    </button>
                   </div>
 
                   <div className="space-y-4 text-xs">
