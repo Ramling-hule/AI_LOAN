@@ -1,6 +1,6 @@
 # AI-Powered SME Loan Underwriting Platform
 
-A production-ready **monorepo** for an AI-powered SME loan underwriting platform built with React, Express.js, MongoDB, ChromaDB, Tesseract OCR, and Ollama.
+A production-ready **monorepo** for an AI-powered SME loan underwriting platform built with React, Express.js, PostgreSQL, PaddleOCR, and LLMs.
 
 ---
 
@@ -10,7 +10,7 @@ A production-ready **monorepo** for an AI-powered SME loan underwriting platform
 AI_LOAN_AG/
 ├── frontend/          # React + Vite + Tailwind + shadcn/ui
 ├── backend/           # Express.js + MongoDB + JWT RBAC
-├── ai-services/       # Ollama + ChromaDB + Tesseract OCR
+├── ai-services/       # Python FastAPI + pgvector + PaddleOCR
 ├── docker-compose.yml # Full stack orchestration
 ├── .env.example       # Root environment template
 ├── .eslintrc.js       # Shared ESLint config
@@ -80,8 +80,8 @@ npm run dev:frontend
 | Layer | Purpose |
 |---|---|
 | `services/llm/` | Ollama REST API client |
-| `services/ocr/` | Tesseract OCR document processing |
-| `services/vectorDb/` | ChromaDB vector storage & retrieval |
+| `services/ocr/` | PaddleOCR document processing |
+| `services/vectorDb/` | PostgreSQL pgvector storage & retrieval |
 | `services/embeddings/` | Text embedding generation |
 
 ### Frontend (`/frontend`)
@@ -111,8 +111,7 @@ JWT-based authentication with Role-Based Access Control (RBAC).
 | Frontend | 3000 |
 | Backend API | 5000 |
 | AI Services | 5001 |
-| MongoDB | 27017 |
-| ChromaDB | 8000 |
+| PostgreSQL | 5432 |
 | Ollama | 11434 |
 
 ---
@@ -135,9 +134,9 @@ JWT-based authentication with Role-Based Access Control (RBAC).
 |---|---|
 | Frontend | React 18, Vite, Tailwind CSS, shadcn/ui |
 | Backend | Express.js, Mongoose |
-| Database | MongoDB |
-| Vector DB | ChromaDB |
-| OCR | Tesseract OCR |
+| Database | PostgreSQL |
+| Vector DB | pgvector |
+| OCR | PaddleOCR |
 | LLM Runtime | Ollama |
 | File Storage | Cloudinary |
 | Auth | JWT + RBAC |
