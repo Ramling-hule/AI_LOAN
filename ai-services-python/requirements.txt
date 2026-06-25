@@ -1,0 +1,48 @@
+# ============================================================
+# Python AI Services — Dependencies
+# FastAPI + PaddleOCR + Google Gemini + asyncpg
+# ============================================================
+
+# ── Web Framework ─────────────────────────────────────────────
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.12
+
+# ── Settings & Validation ─────────────────────────────────────
+pydantic==2.10.3
+pydantic-settings==2.6.1
+
+# ── Database ──────────────────────────────────────────────────
+asyncpg==0.30.0           # async PostgreSQL driver (pgvector compatible)
+
+# ── Document Parsing & OCR (lightweight) ──────────────────────
+# pdfplumber: native PDF text extraction (no ML needed)
+pdfplumber==0.11.4
+# pdf2image: PDF → image for scanned docs (uses poppler-utils)
+pdf2image==1.17.0
+Pillow==11.0.0
+# python-docx: DOCX parsing
+python-docx==1.1.2
+opencv-python-headless==4.10.0.84
+paddlepaddle
+paddleocr
+
+# ── LLM: Google Gemini ────────────────────────────────────────
+google-generativeai==0.8.3
+
+# ── HTTP Client (for backend callbacks) ───────────────────────
+httpx==0.28.1
+aiohttp==3.11.10
+json_repair
+
+# ── Utilities ─────────────────────────────────────────────────
+python-dotenv==1.0.1
+python-jose[cryptography]==3.3.0   # JWT for service-to-service auth
+tenacity==9.0.0            # Retry logic for LLM / OCR failures
+numpy>=2.0.0              # Vector operations
+loguru==0.7.3              # Structured logging
+reportlab==4.1.0           # PDF Generation for testing and reports
+json-repair==0.61.0        # Fix truncated/broken JSON from LLM
+
+# ── Cross-Encoder Re-ranker ───────────────────────────────────────────────────
+sentence-transformers>=3.0.0   # CrossEncoder for top-40 → top-10 re-ranking

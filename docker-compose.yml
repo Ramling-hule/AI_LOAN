@@ -1,74 +1,8 @@
 version: '3.9'
-
 services:
-  # ── MongoDB ──────────────────────────────────────────────────────────────────
-  mongodb:
-    image: mongo:7.0
-    container_name: ai_loan_mongodb
-    restart: unless-stopped
-    ports:
-      - '27017:27017'
-    volumes:
-      - mongo_data:/data/db
-    environment:
-      MONGO_INITDB_DATABASE: ai_loan_ag
-    networks:
-      - loan_network
 
-  # ── PostgreSQL (Extracted Parameters) ────────────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    container_name: ai_loan_postgres
-    restart: unless-stopped
-    ports:
-      - '5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      POSTGRES_DB: loan_ai_extractions
-      POSTGRES_USER: loan_ai
-      POSTGRES_PASSWORD: loan_ai_secret
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U loan_ai -d loan_ai_extractions']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - loan_network
 
-  # ── ChromaDB ─────────────────────────────────────────────────────────────────
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: ai_loan_chromadb
-    restart: unless-stopped
-    ports:
-      - '8000:8000'
-    volumes:
-      - chroma_data:/chroma/chroma
-    networks:
-      - loan_network
-
-  # ── Ollama (Local LLM) ───────────────────────────────────────────────────────
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ai_loan_ollama
-    restart: unless-stopped
-    ports:
-      - '11434:11434'
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - loan_network
-    # Uncomment for GPU support:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
-
-  # ── Redis (Session Store & Token Revocation) ──────────────────────────────────
+  # ── Redis (Session Store & Token Revocation — unchanged) ───────────────────
   redis:
     image: redis:7-alpine
     container_name: ai_loan_redis
@@ -78,7 +12,7 @@ services:
     networks:
       - loan_network
 
-  # ── Backend (Express.js) ──────────────────────────────────────────────────────
+  # ── Backend (Express.js — now using PostgreSQL only) ──────────────────────
   backend:
     build:
       context: ./backend
@@ -90,47 +24,41 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      - MONGO_URI=mongodb://mongodb:27017/ai_loan_ag
+      # Override .env file with Docker service hostnames
+      - DATABASE_URL=postgresql://loan_ai:loan_ai_secret@postgres:5432/ai_loan_ag
       - REDIS_URL=redis://redis:6379
+      - AI_SERVICE_URL=http://ai-services-python:5001
     depends_on:
-      - mongodb
-      - redis
+      redis:
+        condition: service_started
     volumes:
       - ./backend:/app
       - /app/node_modules
     networks:
       - loan_network
 
-  # ── AI Services ───────────────────────────────────────────────────────────────
-  ai-services:
+  # ── AI Services (Python FastAPI — replaces Node.js ai-services) ───────────
+  ai-services-python:
     build:
-      context: ./ai-services
+      context: ./ai-services-python
       dockerfile: Dockerfile
     container_name: ai_loan_ai_services
     restart: unless-stopped
     ports:
-      - '7000:7000'
+      - '5001:5001'
     env_file:
-      - ./ai-services/.env
+      - ./ai-services-python/.env
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
-      - POSTGRES_URL=postgresql://loan_ai:loan_ai_secret@postgres:5432/loan_ai_extractions
-    depends_on:
-      chromadb:
-        condition: service_started
-      ollama:
-        condition: service_started
-      postgres:
-        condition: service_healthy
+      # Docker service hostname overrides
+      - DATABASE_URL=postgresql://loan_ai:loan_ai_secret@postgres:5432/ai_loan_ag
+      - BACKEND_URL=http://host.docker.internal:5000
     volumes:
-      - ./ai-services:/app
-      - ai_services_node_modules:/app/node_modules
+      - ./ai-services-python:/app
+      - ai_service_cache:/root/.paddleocr      # PaddleOCR model cache
     networks:
       - loan_network
 
-  # ── Frontend (Vite dev server) ─────────────────────────────────────────────
+  # ── Frontend (Vite dev server — unchanged) ─────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -148,11 +76,8 @@ services:
       - loan_network
 
 volumes:
-  mongo_data:
   postgres_data:
-  chroma_data:
-  ollama_data:
-  ai_services_node_modules:
+  ai_service_cache:
 
 networks:
   loan_network:
