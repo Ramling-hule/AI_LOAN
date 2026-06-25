@@ -2,8 +2,7 @@ import { verifyAccessToken } from '../utils/token.utils.js';
 import ApiError from '../utils/ApiError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { getSession, setSession } from '../config/redis.js';
-import { Role } from '../models/index.js';
-import { detectSessionAnomaly } from './fraud.js';
+import { getRolePermissions } from '../db/queries/users.queries.js';
 
 // ---------------------------------------------------------------------------
 // Role constants — single source of truth for all role strings
@@ -38,8 +37,7 @@ export const protect = asyncHandler(async (req, res, next) => {
 
   req.user = decoded;  // { id, email, role, role_id, sessionId, iat, exp, jti }
 
-  // Perform fraud hijacking/IP/UA anomaly verification
-  await detectSessionAnomaly(req, res, next);
+  next();
 });
 
 // ---------------------------------------------------------------------------
@@ -79,10 +77,9 @@ export const authorizePermissions = (...requiredPermissions) =>
 
     let permissions = session.permissions;
 
-    // Cache miss: retrieve permissions from Database and store in Redis session cache
+    // Cache miss: retrieve permissions from PostgreSQL and cache in Redis session
     if (!permissions) {
-      const role = await Role.findById(req.user.role_id).populate('permissions');
-      permissions = role ? role.permissions.map(p => p.name) : [];
+      permissions = await getRolePermissions(req.user.role_id);
       
       // Update Redis session cache
       session.permissions = permissions;

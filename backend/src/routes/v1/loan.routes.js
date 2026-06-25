@@ -13,6 +13,7 @@ import {
   submitLoan,
   changeLoanStatus,
   getLoanHistory,
+  chatWithLoan,
 } from '../../controllers/loan.controller.js';
 import { protect, authorizeRoles, ROLES } from '../../middleware/auth.js';
 import { upload } from '../../middleware/upload.js';
@@ -46,6 +47,7 @@ router.put('/draft/:id', authorizeRoles(ROLES.SME), saveDraft);
 router.post('/draft/:id/upload', authorizeRoles(ROLES.SME), upload.single('file'), uploadDocument);
 router.delete('/draft/:id/upload/:docType', authorizeRoles(ROLES.SME), deleteDocument);
 router.post('/draft/:id/submit', authorizeRoles(ROLES.SME), submitLoan);
+router.post('/draft/:id/chat', authorizeRoles(ROLES.BANK_ADMIN), chatWithLoan);
 
 // GET  /api/v1/loans/:id — fetch single application
 router.get('/:id', getLoanById);

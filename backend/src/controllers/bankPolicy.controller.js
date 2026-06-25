@@ -1,12 +1,18 @@
 import { v4 as uuidv4 } from 'uuid';
 
-import { BankPolicyDocument } from '../models/index.js';
+import {
+  findPoliciesForBank,
+  createPolicy,
+  findPolicyById,
+  updatePolicy as updatePolicyInDb,
+  deletePolicy as deletePolicyFromDb,
+} from '../db/queries/policies.queries.js';
 import { cloudinary } from '../config/cloudinary.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
-import AuditLog from '../models/auditLog.model.js';
+import { recordAuditLog } from '../db/queries/auditLogs.queries.js';
 
 // ---------------------------------------------------------------------------
 // Cloudinary Helpers
@@ -61,12 +67,7 @@ export const getPolicies = asyncHandler(async (req, res) => {
   const bankName = req.user.bank_name;
 
   // Retrieve default policies and the ones uploaded for the underwriter's bank
-  const policies = await BankPolicyDocument.find({
-    $or: [
-      { bank_name: bankName },
-      { is_system_default: true }
-    ]
-  }).sort({ is_system_default: -1, created_at: -1 });
+  const policies = await findPoliciesForBank(bankName);
 
   return ApiResponse.ok(policies, 'Bank policy documents retrieved successfully').send(res);
 });
@@ -96,9 +97,8 @@ export const uploadPolicy = asyncHandler(async (req, res) => {
   // Upload to Cloudinary
   const uploadResult = await uploadToCloudinary(file.buffer, file.originalname, file.mimetype);
 
-  // Save metadata to MongoDB
-  const policyDoc = await BankPolicyDocument.create({
-    _id: uuidv4(),
+  // Save metadata to database
+  const policyDoc = await createPolicy({
     bank_name: req.user.bank_name,
     title: title.trim(),
     description: description ? description.trim() : '',
@@ -113,14 +113,14 @@ export const uploadPolicy = asyncHandler(async (req, res) => {
   });
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'BankAdminUser',
     actor_email: req.user.email,
     action: 'bank.upload_policy',
     method: 'POST',
     resource_path: req.originalUrl,
-    resource_id: policyDoc._id,
+    resource_id: policyDoc.id,
     resource_model: 'BankPolicyDocument',
     status: 'success',
     status_code: 201,
@@ -138,7 +138,7 @@ export const uploadPolicy = asyncHandler(async (req, res) => {
 export const deletePolicy = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const policy = await BankPolicyDocument.findById(id);
+  const policy = await findPolicyById(id);
   if (!policy) {
     throw new ApiError(404, 'Policy document not found');
   }
@@ -159,11 +159,11 @@ export const deletePolicy = asyncHandler(async (req, res) => {
     logger.error(`Failed to delete asset ${policy.public_id} from Cloudinary during cleanup:`, err);
   }
 
-  // Delete from DB
-  await policy.deleteOne();
+  // Delete from DB (soft delete)
+  await deletePolicyFromDb(id);
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'BankAdminUser',
     actor_email: req.user.email,
@@ -190,7 +190,7 @@ export const updatePolicy = asyncHandler(async (req, res) => {
   const { title, description } = req.body;
   const file = req.file;
 
-  const policy = await BankPolicyDocument.findById(id);
+  const policy = await findPolicyById(id);
   if (!policy) {
     throw new ApiError(404, 'Policy document not found');
   }
@@ -200,11 +200,12 @@ export const updatePolicy = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'Access denied. You cannot edit policies uploaded by another bank');
   }
 
+  const updates = {};
   if (title && title.trim()) {
-    policy.title = title.trim();
+    updates.title = title.trim();
   }
   if (description !== undefined) {
-    policy.description = description.trim();
+    updates.description = description.trim();
   }
 
   if (file) {
@@ -225,20 +226,20 @@ export const updatePolicy = asyncHandler(async (req, res) => {
 
     // Upload new asset
     const uploadResult = await uploadToCloudinary(file.buffer, file.originalname, file.mimetype);
-    policy.filename = file.originalname;
-    policy.url = uploadResult.secure_url;
-    policy.public_id = uploadResult.public_id;
-    policy.size = file.size;
-    policy.mimetype = file.mimetype;
+    updates.filename = file.originalname;
+    updates.url = uploadResult.secure_url;
+    updates.public_id = uploadResult.public_id;
+    updates.size = file.size;
+    updates.mimetype = file.mimetype;
 
     // Clear text content as this policy is now PDF-file-backed
-    policy.content = undefined;
+    updates.content = null;
   }
 
-  await policy.save();
+  const updatedPolicy = await updatePolicyInDb(id, updates);
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'BankAdminUser',
     actor_email: req.user.email,
@@ -253,6 +254,5 @@ export const updatePolicy = asyncHandler(async (req, res) => {
     user_agent: req.headers['user-agent'],
   }).catch(() => {});
 
-  return ApiResponse.ok(policy, 'Confidential policy document updated successfully').send(res);
+  return ApiResponse.ok(updatedPolicy, 'Confidential policy document updated successfully').send(res);
 });
-

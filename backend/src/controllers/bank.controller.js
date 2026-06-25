@@ -1,7 +1,7 @@
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import BankService from '../services/bank.service.js';
-import AuditLog from '../models/auditLog.model.js';
+import { recordAuditLog } from '../db/queries/auditLogs.queries.js';
 
 // ---------------------------------------------------------------------------
 // Bank Controller
@@ -24,7 +24,7 @@ export const sendOtp = asyncHandler(async (req, res) => {
   const result = await BankService.sendOtp(req.user.id, req.body.contact);
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
     actor_email: req.user.email,
@@ -48,14 +48,14 @@ export const verifyOtpAndLink = asyncHandler(async (req, res) => {
   const account = await BankService.verifyOtpAndLink(req.user.id, req.body);
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
     actor_email: req.user.email,
     action: 'bank.verify_and_link',
     method: 'POST',
     resource_path: req.originalUrl,
-    resource_id: account._id,
+    resource_id: account.id,
     resource_model: 'BankAccount',
     status: 'success',
     status_code: 201,
@@ -74,7 +74,7 @@ export const unlinkAccount = asyncHandler(async (req, res) => {
   await BankService.unlinkAccount(req.user.id, req.params.id);
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
     actor_email: req.user.email,

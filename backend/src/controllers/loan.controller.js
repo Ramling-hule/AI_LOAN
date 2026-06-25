@@ -1,7 +1,16 @@
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
+import ApiError from '../utils/ApiError.js';
 import LoanService from '../services/loan.service.js';
-import AuditLog from '../models/auditLog.model.js';
+import { recordAuditLog } from '../db/queries/auditLogs.queries.js';
+import { findLoanById } from '../db/queries/loans.queries.js';
+import axios from 'axios';
+import logger from '../utils/logger.js';
+
+const aiClient = axios.create({
+  baseURL: process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001',
+  timeout: 30000,
+});
 
 // ---------------------------------------------------------------------------
 // Loan Controller
@@ -22,7 +31,7 @@ export const getPartnerBanks = asyncHandler(async (req, res) => {
  * Returns a list of applications filtered by the user's role constraints.
  */
 export const getLoans = asyncHandler(async (req, res) => {
-  const loans = await LoanService.getLoans(req.user);
+  const loans = await LoanService.getLoans(req.user, req.query);
   return ApiResponse.ok(loans, 'Loans retrieved successfully').send(res);
 });
 
@@ -34,14 +43,14 @@ export const createLoan = asyncHandler(async (req, res) => {
   const loan = await LoanService.createLoan(req.user.id, req.body);
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
     actor_email: req.user.email,
     action: 'loan.create',
     method: 'POST',
     resource_path: req.originalUrl,
-    resource_id: loan._id,
+    resource_id: loan.id,
     resource_model: 'Loan',
     status: 'success',
     status_code: 201,
@@ -62,6 +71,50 @@ export const getLoanById = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /api/v1/loans/draft/:id/chat
+ * Proxy chat requests to AI Services
+ */
+export const chatWithLoan = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { query } = req.body;
+  if (!query) throw ApiError.badRequest('Query is required');
+
+  const loan = await findLoanById(id);
+  if (!loan) throw ApiError.notFound('Loan not found');
+
+  try {
+    const response = await aiClient.post(`/api/v1/chat/loan/${loan.app_id}`, { query });
+    return res.json(response.data);
+  } catch (error) {
+    logger.error(`[Chat] Proxy error: ${error.message}`);
+    if (error.response) {
+      if (error.response.status === 429) {
+        return res.status(429).json({
+          success: false,
+          message: error.response.data?.detail?.message || 'AI Engine rate limited',
+          retry_after: error.response.data?.detail?.retry_after || 30
+        });
+      }
+      
+      const detailStr = error.response.data?.detail;
+      if (typeof detailStr === 'string' && (detailStr.includes('429') || detailStr.includes('quota'))) {
+        const match = detailStr.match(/retry in (\d+\.?\d*)s/);
+        const retryAfter = match ? Math.ceil(parseFloat(match[1])) : 60;
+        return res.status(429).json({
+          success: false,
+          message: 'AI Engine Free Tier Quota exceeded',
+          retry_after: retryAfter
+        });
+      }
+
+      logger.error(`[Chat] AI Service response: ${JSON.stringify(error.response.data)}`);
+      throw ApiError.internal(`AI chat service error: ${JSON.stringify(error.response.data)}`);
+    }
+    throw ApiError.internal('Failed to communicate with AI chat service');
+  }
+});
+
+/**
  * PATCH /api/v1/loans/:id
  * Updates loan application status or progress (underwriter/bank admin).
  */
@@ -69,14 +122,14 @@ export const updateLoan = asyncHandler(async (req, res) => {
   const loan = await LoanService.updateLoan(req.params.id, req.body, req.user);
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: req.user.role === 'sme' ? 'SMEUser' : 'BankAdminUser',
     actor_email: req.user.email,
     action: 'loan.update',
     method: 'PATCH',
     resource_path: req.originalUrl,
-    resource_id: loan._id,
+    resource_id: loan.id,
     resource_model: 'Loan',
     status: 'success',
     status_code: 200,
@@ -95,7 +148,7 @@ export const deleteLoan = asyncHandler(async (req, res) => {
   await LoanService.deleteLoan(req.params.id, req.user);
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: req.user.role === 'sme' ? 'SMEUser' : 'BankAdminUser',
     actor_email: req.user.email,
@@ -120,14 +173,14 @@ export const deleteLoan = asyncHandler(async (req, res) => {
 export const createDraft = asyncHandler(async (req, res) => {
   const loan = await LoanService.createDraft(req.user.id, req.body);
 
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
     actor_email: req.user.email,
     action: 'loan.create_draft',
     method: 'POST',
     resource_path: req.originalUrl,
-    resource_id: loan._id,
+    resource_id: loan.id,
     resource_model: 'Loan',
     status: 'success',
     status_code: 201,
@@ -145,14 +198,14 @@ export const createDraft = asyncHandler(async (req, res) => {
 export const saveDraft = asyncHandler(async (req, res) => {
   const loan = await LoanService.saveDraft(req.user.id, req.params.id, req.body);
 
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
     actor_email: req.user.email,
     action: 'loan.save_draft',
     method: 'PUT',
     resource_path: req.originalUrl,
-    resource_id: loan._id,
+    resource_id: loan.id,
     resource_model: 'Loan',
     status: 'success',
     status_code: 200,
@@ -177,7 +230,7 @@ export const uploadDocument = asyncHandler(async (req, res) => {
     req.file
   );
 
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
     actor_email: req.user.email,
@@ -206,7 +259,7 @@ export const deleteDocument = asyncHandler(async (req, res) => {
     req.params.docType
   );
 
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
     actor_email: req.user.email,
@@ -231,14 +284,14 @@ export const deleteDocument = asyncHandler(async (req, res) => {
 export const submitLoan = asyncHandler(async (req, res) => {
   const loan = await LoanService.submitLoanApplication(req.user.id, req.params.id);
 
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
     actor_email: req.user.email,
     action: 'loan.submit',
     method: 'POST',
     resource_path: req.originalUrl,
-    resource_id: loan._id,
+    resource_id: loan.id,
     resource_model: 'Loan',
     status: 'success',
     status_code: 200,
@@ -264,14 +317,14 @@ export const changeLoanStatus = asyncHandler(async (req, res) => {
   );
 
   // Record audit log
-  AuditLog.record({
+  recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: req.user.role === 'sme' ? 'SMEUser' : 'BankAdminUser',
     actor_email: req.user.email,
     action: 'loan.transition_status',
     method: 'POST',
     resource_path: req.originalUrl,
-    resource_id: loan._id,
+    resource_id: loan.id,
     resource_model: 'Loan',
     status: 'success',
     status_code: 200,

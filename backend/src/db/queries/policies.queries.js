@@ -1,0 +1,125 @@
+import supabase from '../supabaseClient.js';
+import { v4 as uuidv4 } from 'uuid';
+
+// ---------------------------------------------------------------------------
+// policies.queries.js
+// Supabase operations for the bank_policy_documents table.
+// ---------------------------------------------------------------------------
+
+export const findPoliciesForBank = async (bankName) => {
+  const { data, error } = await supabase
+    .from('bank_policy_documents')
+    .select('*')
+    .eq('is_active', true)
+    .or(`bank_name.eq.${bankName},is_system_default.eq.true`)
+    .order('is_system_default', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+};
+
+export const findAllPolicies = async ({ bankName, page = 1, limit = 20 }) => {
+  let query = supabase
+    .from('bank_policy_documents')
+    .select('*', { count: 'exact' })
+    .eq('is_active', true);
+
+  if (bankName) query = query.eq('bank_name', bankName);
+
+  const offset = (page - 1) * limit;
+  query = query.order('created_at', { ascending: false })
+               .range(offset, offset + limit - 1);
+
+  const { data, count, error } = await query;
+  if (error) throw error;
+  
+  // To match previous return style (raw rows), we just return data,
+  // but if pagination metadata was expected, we'd wrap it. 
+  // Based on old code, it just returned rows.
+  return data || [];
+};
+
+export const findPolicyById = async (id) => {
+  const { data, error } = await supabase
+    .from('bank_policy_documents')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+};
+
+export const createPolicy = async ({
+  bank_name,
+  title,
+  content,
+  description,
+  filename,
+  url,
+  public_id,
+  size,
+  mimetype,
+  uploaded_by,
+  uploaded_by_name,
+  is_system_default = false,
+}) => {
+  const { data, error } = await supabase
+    .from('bank_policy_documents')
+    .insert({
+      id: uuidv4(),
+      bank_name: bank_name || null,
+      title,
+      content: content || null,
+      description: description || null,
+      filename: filename || null,
+      url: url || null,
+      public_id: public_id || null,
+      size: size || null,
+      mimetype: mimetype || null,
+      uploaded_by: uploaded_by || null,
+      uploaded_by_name: uploaded_by_name || null,
+      is_system_default,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+export const updatePolicy = async (
+  id,
+  updates
+) => {
+  const allowed = ['title', 'content', 'description', 'filename', 'url', 'public_id', 'size', 'mimetype', 'is_system_default', 'is_active'];
+  const updatePayload = {};
+  
+  for (const field of allowed) {
+    if (updates[field] !== undefined) {
+      updatePayload[field] = updates[field];
+    }
+  }
+
+  if (Object.keys(updatePayload).length === 0) return findPolicyById(id);
+
+  const { data, error } = await supabase
+    .from('bank_policy_documents')
+    .update(updatePayload)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+export const deletePolicy = async (id) => {
+  const { error } = await supabase
+    .from('bank_policy_documents')
+    .update({ is_active: false })
+    .eq('id', id);
+
+  if (error) throw error;
+};

@@ -1,172 +1,153 @@
-import axios from 'axios';
-import { Loan, BankPolicyDocument, LoanStatusHistory } from '../models/index.js';
+import { findBankAdminById } from '../db/queries/users.queries.js';
+import { findPoliciesForBank } from '../db/queries/policies.queries.js';
+import ExtractionService from './extraction.service.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
-import env from '../config/env.js';
+import aiServiceClient from '../infrastructure/ai/AiServiceClient.js';
+import loanRepository from '../repositories/LoanRepository.js';
+import EmailService from './email.service.js';
 
-const aiClient = axios.create({
-  baseURL: env.AI_SERVICE_URL,
-  timeout: 300_000, // 5 min for inference
-  headers: { 'Content-Type': 'application/json' },
-});
+const stripHtml = (html) => (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
-export const UnderwritingService = {
-  /**
-   * Run the AI Underwriting engine on a loan application.
-   *
-   * @param {string} loanId - MongoDB ID of the loan
-   * @param {object} userContext - Current authenticated user context
-   * @returns {Promise<object>} Underwriting assessment report
-   */
-  async assessLoan(loanId, userContext, forceReextract = false) {
-    logger.info(`[Underwriting Service] Starting AI underwriting assessment for loan=${loanId}`);
+class UnderwritingService {
+  constructor(aiClient, loanRepo, emailSvc) {
+    this.aiClient = aiClient;
+    this.loanRepo = loanRepo;
+    this.emailSvc = emailSvc;
+  }
 
-    // 1. Fetch loan application
-    const loan = await Loan.findById(loanId);
+  async triggerAssessment(loanId, userContext, options = {}) {
+    const loan = await this.loanRepo.findById(loanId);
     if (!loan) throw ApiError.notFound('Loan application not found');
 
-    // Auth check: only bank staff or super admin can run underwriting assessments
-    if (userContext.role === 'sme') {
-      throw ApiError.forbidden('SME applicants cannot trigger AI Underwriting assessments');
+    if (userContext.role === 'sme') throw ApiError.forbidden('SME applicants cannot trigger underwriting');
+
+    if (['bank_admin', 'bank_underwriter'].includes(userContext.role)) {
+      const admin = await findBankAdminById(userContext.id);
+      if (!admin || admin.bank_name !== loan.bank_name) throw ApiError.forbidden('Not authorized for this loan');
     }
 
-    // Guard: Ensure parameter extraction is run first (or auto-trigger if missing/failed/incomplete)
-    const isExtractionMissing = !loan.ai_extraction_id || !['completed', 'partial'].includes(loan.ai_extraction_status);
-    if (forceReextract || isExtractionMissing) {
-      logger.info(`[Underwriting Service] AI Parameter Extraction is missing, failed, or force-requested. Triggering extraction...`);
-      try {
-        const { default: ExtractionService } = await import('./extraction.service.js');
-        await ExtractionService.triggerExtraction(loanId, userContext, forceReextract);
-        
-        // Reload loan
-        const refreshedLoan = await Loan.findById(loanId);
-        if (refreshedLoan) {
-          loan.ai_extraction_id = refreshedLoan.ai_extraction_id;
-          loan.ai_extraction_status = refreshedLoan.ai_extraction_status;
-          loan.extracted_summary = refreshedLoan.extracted_summary;
-          loan.ai_extracted_at = refreshedLoan.ai_extracted_at;
-        }
-      } catch (err) {
-        logger.error(`[Underwriting Service] Auto-trigger parameter extraction failed: ${err.message}`);
-        // Only throw error if we still don't have a valid extraction status to proceed with
-        if (!loan.ai_extraction_id || !['completed', 'partial'].includes(loan.ai_extraction_status)) {
-          throw ApiError.badRequest(
-            `AI Parameter Extraction failed: ${err.message}. Please perform parameter extraction first.`
-          );
-        }
+    const badExtractionStates = ['pending', 'failed', null];
+    if (badExtractionStates.includes(loan.ai_extraction_status) || !loan.ai_extraction_id) {
+      logger.info(`[Underwriting] Extraction incomplete for ${loanId}. Auto-triggering...`);
+      await ExtractionService.triggerExtraction(loanId, userContext, true);
+      const refreshed = await this.loanRepo.findById(loanId);
+      if (refreshed.ai_extraction_status === 'failed') {
+        throw ApiError.internal('Extraction failed. Cannot proceed with underwriting.');
       }
     }
 
-    // 2. Load all active policies (bank-specific + system defaults)
-    const policies = await BankPolicyDocument.find({
-      $or: [
-        { bank_name: loan.bank_name },
-        { is_system_default: true }
-      ]
-    });
+    const policies = await findPoliciesForBank(loan.bank_name);
+    const policyData = policies.map(p => ({
+      id: p.id || p._id,
+      title: p.title,
+      content: stripHtml(p.content),
+    }));
 
-    const policyTexts = policies.map((p) => {
-      const cleanContent = p.content
-        ? p.content.replace(/<[^>]*>/g, '').trim()
-        : p.description || '';
-      return `${p.title}:\n${cleanContent}`;
-    });
-
-    logger.info(
-      `[Underwriting Service] Grounding assessment against ${policyTexts.length} policy documents for bank "${loan.bank_name}"`
-    );
-
-    // 3. Invoke ai-services underwriting assess endpoint
-    let report;
+    let assessment;
     try {
-      const response = await aiClient.post('/api/v1/underwriting/assess', {
-        application_id: loan.appId,
-        policies: policyTexts,
+      const response = await this.aiClient.assessUnderwriting({
+        application_id: loan.app_id,
+        loan_id: loanId,
+        requested_amount: loan.amount,
+        bank_name: loan.bank_name,
+        policies: policyData,
+        ...options,
       });
-      report = response.data?.data;
+      assessment = response.data?.data;
     } catch (err) {
-      const msg = err.response?.data?.message || err.message;
-      logger.error(`[Underwriting Service] AI services assessment failed: ${msg}`);
-      throw ApiError.internal(`AI Underwriting service error: ${msg}`);
+      const aiMsg = err.response?.data?.message || err.response?.data?.detail || err.message;
+      throw ApiError.internal(`AI underwriting service error: ${aiMsg}`);
     }
 
-    if (!report) {
-      throw ApiError.internal('Invalid response from AI underwriting service');
-    }
+    if (!assessment) throw ApiError.internal('AI underwriting returned an empty assessment.');
 
-    // 4. Save assessment back to MongoDB Loan document
-    loan.underwriting_assessment = {
-      risk_score: report.risk_score,
-      risk_level: report.risk_level,
-      eligibility_summary: report.eligibility_summary,
-      approval_recommendation: report.approval_recommendation,
-      rejection_explanation: report.rejection_explanation || null,
-      checks: {
-        turnover_eligibility: {
-          status: report.checks?.turnover_eligibility?.status || 'WARNING',
-          details: report.checks?.turnover_eligibility?.details || ''
-        },
-        gst_consistency: {
-          status: report.checks?.gst_consistency?.status || 'WARNING',
-          details: report.checks?.gst_consistency?.details || ''
-        },
-        existing_liabilities: {
-          status: report.checks?.existing_liabilities?.status || 'WARNING',
-          details: report.checks?.existing_liabilities?.details || ''
-        },
-        cheque_bounce_patterns: {
-          status: report.checks?.cheque_bounce_patterns?.status || 'WARNING',
-          details: report.checks?.cheque_bounce_patterns?.details || ''
-        },
-        suspicious_behaviour: {
-          status: report.checks?.suspicious_behaviour?.status || 'WARNING',
-          details: report.checks?.suspicious_behaviour?.details || ''
-        }
-      },
-      reasoning: report.reasoning,
-      assessed_at: new Date()
-    };
+    const riskScore = assessment.risk_score || loan.risk_score;
+    await this.loanRepo.updateUnderwritingAssessment(loanId, assessment, riskScore);
 
-    // Update risk score on the loan
-    loan.risk_score = report.risk_score;
-    await loan.save();
-
-    // Create a history status log for the assessment (does not change status automatically)
-    await LoanStatusHistory.create({
-      loan_id: loan._id,
+    await this.loanRepo.addStatusHistory({
+      loan_id: loanId,
       from_status: loan.status,
       to_status: loan.status,
       changed_by: userContext.id,
-      changed_by_name: userContext.admin_name || 'AI Underwriter',
-      changed_by_model: 'BankAdminUser',
-      notes: `AI Underwriting assessment executed. Risk Score: ${report.risk_score} (${report.risk_level} Risk). Recommendation: ${report.approval_recommendation}.`,
+      changed_by_name: 'AI Underwriting Engine',
+      changed_by_model: 'System',
+      notes: `AI Underwriting Assessment complete. Risk: ${assessment.risk_level}. Recommendation: ${assessment.approval_recommendation}. Score: ${riskScore}`,
     });
 
-    logger.info(
-      `[Underwriting Service] Stored assessment and risk score (${report.risk_score}) for loan ${loanId}`
-    );
+    logger.info(`[Underwriting] Assessment complete for loan=${loanId}. Risk=${assessment.risk_level}, Recommendation=${assessment.approval_recommendation}`);
 
-    return loan.underwriting_assessment;
-  },
+    return { loan_id: loanId, assessment };
+  }
 
-  /**
-   * Fetch stored underwriting assessment report.
-   *
-   * @param {string} loanId
-   * @param {object} userContext
-   * @returns {Promise<object|null>}
-   */
-  async getAssessmentReport(loanId, userContext) {
-    const loan = await Loan.findById(loanId);
+  async getAssessment(loanId, userContext) {
+    const loan = await this.loanRepo.findById(loanId);
     if (!loan) throw ApiError.notFound('Loan application not found');
 
-    // Auth check
-    if (userContext.role === 'sme' && loan.sme_id !== userContext.id) {
-      throw ApiError.forbidden('You are not authorized to view underwriting reports for other companies');
+    if (userContext.role === 'sme') {
+      const smeId = loan.sme_id?.id || loan.sme_id;
+      if (smeId !== userContext.id) throw ApiError.forbidden('Not authorized');
+    }
+    if (['bank_admin', 'bank_underwriter'].includes(userContext.role)) {
+      const admin = await findBankAdminById(userContext.id);
+      if (!admin || admin.bank_name !== loan.bank_name) throw ApiError.forbidden('Not authorized');
     }
 
-    return loan.underwriting_assessment || null;
-  }
-};
+    if (!loan.underwriting_assessment) {
+      return { message: 'No underwriting assessment has been run for this loan yet.' };
+    }
 
-export default UnderwritingService;
+    return {
+      loan_id: loanId,
+      assessment: loan.underwriting_assessment,
+      risk_score: loan.risk_score,
+    };
+  }
+
+  async notifyPolicyIssue(loanId, policyTitle, details, userContext) {
+    const loan = await this.loanRepo.findById(loanId);
+    if (!loan) throw ApiError.notFound('Loan application not found');
+
+    const fromStatus = loan.status;
+
+    const updatedLoan = await this.loanRepo.updateDraft(loanId, { status: 'missing_info', progress: 50 });
+
+    const notes = `Compliance Issue: Policy "${policyTitle}" is not satisfied.\nDetails: ${details}`;
+    await this.loanRepo.addStatusHistory({
+      loan_id: loanId,
+      from_status: fromStatus,
+      to_status: 'missing_info',
+      changed_by: userContext.id,
+      changed_by_name: userContext.admin_name || 'Bank Admin',
+      changed_by_model: 'BankAdminUser',
+      notes,
+    });
+
+    if (loan.sme_id?.email) {
+      const html = `
+        <h3>Dear ${loan.sme_id.full_name},</h3>
+        <p>We are reviewing your loan application <strong>${loan.app_id}</strong>.</p>
+        <p>Our underwriting team has flagged a policy compliance issue that requires your attention:</p>
+        <div style="background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 5px; color: #721c24; margin: 15px 0;">
+          <strong>Policy: ${policyTitle}</strong><br/>
+          ${details}
+        </div>
+        <p>Please log in to your dashboard to address this issue or upload supporting documents.</p>
+        <p>Best regards,<br/>CapitalScale Underwriting Team</p>
+      `;
+      try {
+        await this.emailSvc.sendEmail({
+          to: loan.sme_id.email,
+          subject: `URGENT: Policy Compliance Issue on Loan Application ${loan.app_id}`,
+          html,
+        });
+      } catch (emailErr) {
+        logger.error(`[Underwriting] Failed to send policy issue email: ${emailErr.message}`);
+      }
+    }
+
+    return updatedLoan;
+  }
+}
+
+export default new UnderwritingService(aiServiceClient, loanRepository, EmailService);

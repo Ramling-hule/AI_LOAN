@@ -1,4 +1,17 @@
-import { BankAccount, OTP } from '../models/index.js';
+import {
+  findLinkedAccountsBySmeId,
+  findAccountByNumberAndSmeId,
+  createBankAccount,
+  unlinkBankAccount,
+  findBankAccountByIdAndSmeId,
+} from '../db/queries/bankAccounts.queries.js';
+import {
+  createOtp,
+  deleteOtpsByUserContact,
+  findOtp,
+  incrementOtpAttempts,
+  deleteOtp,
+} from '../db/queries/otps.queries.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 
@@ -8,7 +21,7 @@ const BankService = {
    */
   async getLinkedAccounts(smeId) {
     logger.info(`Fetching linked bank accounts for SME user ${smeId}`);
-    return await BankAccount.find({ sme_id: smeId, is_linked: true }).sort({ created_at: -1 });
+    return await findLinkedAccountsBySmeId(smeId);
   },
 
   /**
@@ -23,18 +36,16 @@ const BankService = {
 
     // Generate a secure 6-digit numeric OTP code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes TTL expiration
 
     // Delete any existing OTP for this user and contact to prevent duplicates
-    await OTP.deleteMany({ sme_id: smeId, contact });
+    await deleteOtpsByUserContact(smeId, contact);
 
-    // Store in database
-    await OTP.create({
-      sme_id: smeId,
+    // Store in database (expires in 2 minutes)
+    await createOtp({
+      user_id: smeId,
       contact,
       code,
-      expires_at: expiresAt,
-      attempts: 0,
+      expiresInMs: 2 * 60 * 1000,
     });
 
     // Logging OTP code (fulfills backend logging requirement)
@@ -61,58 +72,52 @@ const BankService = {
 
     logger.info(`Verifying OTP for contact ${linked_contact} to link with bank ${bank_name}`);
 
-    // Find the OTP document
-    const otp = await OTP.findOne({ sme_id: smeId, contact: linked_contact });
+    // Find the OTP record
+    const otp = await findOtp({ user_id: smeId, contact: linked_contact });
     if (!otp) {
       throw ApiError.notFound('No verification request found. Please request a new OTP.');
     }
 
     // 1. Check expiration
-    if (new Date() > otp.expires_at) {
-      await otp.deleteOne();
+    if (new Date() > new Date(otp.expires_at)) {
+      await deleteOtp(otp.id);
       throw ApiError.badRequest('Verification code has expired. Please request a new OTP.');
     }
 
     // 2. Check and increment attempts
     if (otp.attempts >= 3) {
-      await otp.deleteOne();
+      await deleteOtp(otp.id);
       throw ApiError.badRequest('Too many failed attempts. Please request a new OTP.');
     }
 
-    otp.attempts += 1;
-    await otp.save();
+    // Increment attempts
+    await incrementOtpAttempts(otp.id);
 
     // 3. Verify OTP code match
     if (otp.code !== code) {
-      throw ApiError.badRequest(`Invalid verification code. ${3 - otp.attempts} attempts remaining.`);
+      throw ApiError.badRequest(`Invalid verification code. ${3 - (otp.attempts + 1)} attempts remaining.`);
     }
 
     // 4. Verification successful, check if bank account is already linked
-    const existing = await BankAccount.findOne({
-      sme_id: smeId,
-      bank_name,
-      account_number,
-      is_linked: true,
-    });
+    const existing = await findAccountByNumberAndSmeId(smeId, bank_name, account_number);
 
     if (existing) {
-      await otp.deleteOne();
+      await deleteOtp(otp.id);
       throw ApiError.conflict('This bank account is already linked to your profile.');
     }
 
     // Link account
-    const bankAccount = await BankAccount.create({
+    const bankAccount = await createBankAccount({
       sme_id: smeId,
       bank_name,
       account_number,
       account_type,
       linked_contact,
       ifsc_code,
-      is_linked: true,
     });
 
     // Delete used OTP
-    await otp.deleteOne();
+    await deleteOtp(otp.id);
 
     logger.info(`Successfully linked bank account ${account_number} (${bank_name}) for SME ${smeId}`);
     return bankAccount;
@@ -124,16 +129,15 @@ const BankService = {
   async unlinkAccount(smeId, accountId) {
     logger.info(`Requesting to unlink account ${accountId} for SME user ${smeId}`);
 
-    const account = await BankAccount.findOne({ _id: accountId, sme_id: smeId });
+    const account = await findBankAccountByIdAndSmeId(accountId, smeId);
     if (!account) {
       throw ApiError.notFound('Linked bank account not found');
     }
 
-    account.is_linked = false;
-    await account.save();
+    await unlinkBankAccount(accountId, smeId);
 
     logger.info(`Successfully unlinked bank account ${accountId}`);
-    return account;
+    return { ...account, is_linked: false };
   },
 };
 

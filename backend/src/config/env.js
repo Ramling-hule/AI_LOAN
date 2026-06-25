@@ -9,8 +9,9 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(5000),
 
-  // MongoDB
-  MONGO_URI: z.string().url({ message: 'MONGO_URI must be a valid URL' }),
+  // Supabase
+  SUPABASE_URL: z.string().url('SUPABASE_URL is required'),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(30, 'SUPABASE_SERVICE_ROLE_KEY is required'),
 
   // JWT
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),

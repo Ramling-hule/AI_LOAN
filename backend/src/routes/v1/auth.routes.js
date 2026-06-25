@@ -12,7 +12,6 @@ import {
 } from '../../controllers/auth.controller.js';
 import { protect } from '../../middleware/auth.js';
 import { authRateLimiter } from '../../middleware/rateLimiter.js';
-import { checkBruteForce } from '../../middleware/fraud.js';
 import validate from '../../middleware/validate.js';
 import {
   smeRegisterSchema,
@@ -49,7 +48,6 @@ router.post(
 router.post(
   '/sme/login',
   authRateLimiter,
-  checkBruteForce,
   validate(loginSchema),
   smeLogin
 );
@@ -65,7 +63,6 @@ router.post(
 router.post(
   '/bank/login',
   authRateLimiter,
-  checkBruteForce,
   validate(loginSchema),
   bankAdminLogin
 );

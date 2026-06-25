@@ -1,7 +1,6 @@
 import 'dotenv/config';
 
 import { createApp } from './src/app.js';
-import { connectDB } from './src/config/db.js';
 import { initCloudinary } from './src/config/cloudinary.js';
 import env from './src/config/env.js';
 import logger from './src/utils/logger.js';
@@ -12,8 +11,8 @@ import logger from './src/utils/logger.js';
 
 const start = async () => {
   try {
-    // 1. Connect to MongoDB
-    await connectDB();
+    // 1. Supabase Client is initialized automatically on import
+    logger.info('✅  Supabase Client Initialized');
 
     // 2. Initialize external services
     initCloudinary();
@@ -25,6 +24,9 @@ const start = async () => {
       logger.info(`🚀  Backend running on port ${env.PORT} [${env.NODE_ENV}]`);
       logger.info(`📡  API base: http://localhost:${env.PORT}/api`);
     });
+
+    // Set server socket timeout to 10 minutes to support long-running AI operations on CPU
+    server.timeout = 600000;
 
     // ── Graceful Shutdown ─────────────────────────────────────────────────
     const shutdown = (signal) => {

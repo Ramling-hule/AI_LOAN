@@ -117,7 +117,7 @@ export const clearRefreshTokenCookie = (res) => {
  * @returns {object}
  */
 export const buildTokenPayload = (user, type) => ({
-  id: user._id,
+  id: user.id,        // PostgreSQL returns `id` not `_id`
   email: user.email,
   role: type,
   role_id: user.role_id,
@@ -125,12 +125,12 @@ export const buildTokenPayload = (user, type) => ({
 
 /**
  * Build the safe public user object returned to the client (no hashes).
- * @param {object} user  - Mongoose document (plain object or doc)
+ * @param {object} user  - Plain PostgreSQL result row
  * @param {'sme'|'bank_admin'|'super_admin'} type
  * @returns {object}
  */
 export const sanitizeUser = (user, type) => {
-  const obj = user.toObject ? user.toObject() : { ...user };
+  const obj = { ...user };   // plain PG objects — no toObject() needed
   delete obj.password_hash;
   obj.type = type;
   obj.role = type;
