@@ -21,10 +21,10 @@ from services.extraction.llm_extractor import extract_parameters, extract_missin
 
 settings = get_settings()
 
-# Fields that trigger a second-pass if still missing after first pass
+
 SECOND_PASS_FIELDS = ["gstin", "pan", "annual_turnover", "net_profit", "avg_monthly_balance"]
 
-# Validators for identity fields
+
 _GSTIN_RE = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
 _PAN_RE    = re.compile(r"^[A-Z]{5}\d{4}[A-Z]$")
 _CIN_RE    = re.compile(r"^[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}$")
@@ -46,14 +46,14 @@ class ExtractionService:
         """
         logger.info(f"[Extraction] Starting pipeline for app={application_id}, loan={loan_id}")
 
-        # Check for cached result (skip if not forcing)
+        
         if not force:
             cached = await self._get_cached_result(application_id)
             if cached and cached.get("is_complete"):
                 logger.info(f"[Extraction] Returning cached complete result for app={application_id}")
                 return self._format_result(cached)
 
-        # Step 1: Run multi-agent pipeline
+        
         extraction = await extract_parameters(application_id)
         raw: dict = extraction["raw"]
         extracted_fields: dict[str, ExtractedField] = extraction.get("extracted_fields", {})
@@ -63,14 +63,14 @@ class ExtractionService:
         if not raw or all(v is None for v in raw.values()):
             logger.warning(f"[Extraction] No parameters extracted for app={application_id}")
 
-        # Step 2: Validate fields and calculate confidence
+        
         confidence_scores, missing_fields = self._validate_and_score(raw, extracted_fields)
         overall_confidence = (
             sum(c["score"] for c in confidence_scores.values())
             / max(len(confidence_scores), 1)
         )
 
-        # Step 3: Second-pass for critical missing fields (if orchestrator didn't handle it)
+        
         if enable_second_pass and missing_fields:
             critical_missing = [f for f in SECOND_PASS_FIELDS if f in missing_fields]
             if critical_missing:
@@ -84,7 +84,7 @@ class ExtractionService:
 
         is_complete = len(missing_fields) == 0
 
-        # Step 4: Upsert to PostgreSQL
+        
         extraction_id = await self._upsert_extraction(
             application_id=application_id,
             loan_id=loan_id,
@@ -114,7 +114,7 @@ class ExtractionService:
 
         return result
 
-    # ── Validation & Scoring ──────────────────────────────────────────────────
+    
 
     def _validate_and_score(
         self,
@@ -141,7 +141,7 @@ class ExtractionService:
             return {"score": score, "source": "llm", "page": None, "document_type": None,
                     "evidence": None, "rerank_score": 0.0, "retrieval_score": 0.0}
 
-        # ── Identity fields ───────────────────────────────────────────────────
+        
         gstin = raw.get("gstin")
         if gstin:
             valid = bool(_GSTIN_RE.match(str(gstin)))
@@ -181,7 +181,7 @@ class ExtractionService:
         else:
             confidence_scores["llpin"] = _base_record("llpin", 0.0)
 
-        # ── Numeric fields ────────────────────────────────────────────────────
+        
         for field in ["annual_turnover", "net_profit", "total_liabilities", "avg_monthly_balance"]:
             val = raw.get(field)
             if val is not None and val != "":
@@ -198,7 +198,7 @@ class ExtractionService:
                     missing_fields.append(field)
                 confidence_scores[field] = _base_record(field, 0.0)
 
-        # cheque_bounce_count: 0 is a valid value
+        
         cbc = raw.get("cheque_bounce_count")
         if cbc is not None:
             score = _ef("cheque_bounce_count").confidence if _ef("cheque_bounce_count") else 0.85
@@ -206,7 +206,7 @@ class ExtractionService:
         else:
             confidence_scores["cheque_bounce_count"] = _base_record("cheque_bounce_count", 0.0)
 
-        # ── Array fields ──────────────────────────────────────────────────────
+        
         for field in ["loan_balances", "promoter_details", "collateral_details"]:
             val = raw.get(field)
             ef = _ef(field)
@@ -218,7 +218,7 @@ class ExtractionService:
 
         return confidence_scores, missing_fields
 
-    # ── PostgreSQL upsert ─────────────────────────────────────────────────────
+    
 
     async def _upsert_extraction(
         self,
@@ -242,10 +242,19 @@ class ExtractionService:
                     pass
             return v
 
+        def clean_scalar(v):
+            if isinstance(v, list):
+                return str(v[0]) if len(v) > 0 else None
+            if isinstance(v, dict):
+                return None
+            if v == "":
+                return None
+            return v
+
         loan_balances     = clean(raw.get("loan_balances"), [])
         promoter_details  = clean(raw.get("promoter_details"), [])
         collateral_details= clean(raw.get("collateral_details"), [])
-        # Store full provenance record in confidence_scores JSONB
+        
         confidence_json   = clean(confidence_scores, {})
 
         existing = await fetchrow(
@@ -267,9 +276,9 @@ class ExtractionService:
                 WHERE application_id = $1
                 """,
                 application_id,
-                raw.get("gstin"), raw.get("pan"), raw.get("cin"), raw.get("llpin"),
-                raw.get("annual_turnover"), raw.get("net_profit"), raw.get("total_liabilities"),
-                raw.get("avg_monthly_balance"), raw.get("cheque_bounce_count"),
+                clean_scalar(raw.get("gstin")), clean_scalar(raw.get("pan")), clean_scalar(raw.get("cin")), clean_scalar(raw.get("llpin")),
+                clean_scalar(raw.get("annual_turnover")), clean_scalar(raw.get("net_profit")), clean_scalar(raw.get("total_liabilities")),
+                clean_scalar(raw.get("avg_monthly_balance")), clean_scalar(raw.get("cheque_bounce_count")),
                 loan_balances, promoter_details, collateral_details,
                 confidence_json, missing_fields, is_complete,
             )
@@ -293,15 +302,15 @@ class ExtractionService:
             )
             """,
             new_id, application_id, loan_id,
-            raw.get("gstin"), raw.get("pan"), raw.get("cin"), raw.get("llpin"),
-            raw.get("annual_turnover"), raw.get("net_profit"), raw.get("total_liabilities"),
-            raw.get("avg_monthly_balance"), raw.get("cheque_bounce_count"),
+            clean_scalar(raw.get("gstin")), clean_scalar(raw.get("pan")), clean_scalar(raw.get("cin")), clean_scalar(raw.get("llpin")),
+            clean_scalar(raw.get("annual_turnover")), clean_scalar(raw.get("net_profit")), clean_scalar(raw.get("total_liabilities")),
+            clean_scalar(raw.get("avg_monthly_balance")), clean_scalar(raw.get("cheque_bounce_count")),
             loan_balances, promoter_details, collateral_details,
             confidence_json, missing_fields, is_complete,
         )
         return new_id
 
-    # ── Cache helpers ─────────────────────────────────────────────────────────
+    
 
     async def _get_cached_result(self, application_id: str) -> dict | None:
         row = await fetchrow(
@@ -323,7 +332,7 @@ class ExtractionService:
             return v
 
         confidence_scores_raw = parse_json(row.get("confidence_scores"), {})
-        # Support both old format (plain float) and new format (dict with "score" key)
+        
         confidence_scores = {
             k: (v["score"] if isinstance(v, dict) else v)
             for k, v in confidence_scores_raw.items()

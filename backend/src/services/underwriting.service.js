@@ -27,16 +27,6 @@ class UnderwritingService {
       if (!admin || admin.bank_name !== loan.bank_name) throw ApiError.forbidden('Not authorized for this loan');
     }
 
-    const badExtractionStates = ['pending', 'failed', null];
-    if (badExtractionStates.includes(loan.ai_extraction_status) || !loan.ai_extraction_id) {
-      logger.info(`[Underwriting] Extraction incomplete for ${loanId}. Auto-triggering...`);
-      await ExtractionService.triggerExtraction(loanId, userContext, true);
-      const refreshed = await this.loanRepo.findById(loanId);
-      if (refreshed.ai_extraction_status === 'failed') {
-        throw ApiError.internal('Extraction failed. Cannot proceed with underwriting.');
-      }
-    }
-
     const policies = await findPoliciesForBank(loan.bank_name);
     const policyData = policies.map(p => ({
       id: p.id || p._id,
@@ -46,21 +36,41 @@ class UnderwritingService {
 
     let assessment;
     try {
-      const response = await this.aiClient.assessUnderwriting({
-        application_id: loan.app_id,
-        loan_id: loanId,
-        requested_amount: loan.amount,
-        bank_name: loan.bank_name,
-        policies: policyData,
-        ...options,
-      });
-      assessment = response.data?.data;
+      if (options.force) {
+        const response = await this.aiClient.preemptQueue(loanId, {
+          task_type: 'full_pipeline',
+          payload: {
+            application_id: loan.app_id,
+            requested_amount: loan.amount,
+            bank_name: loan.bank_name,
+            policies: policyData,
+            force: true
+          }
+        });
+        assessment = response.data?.data;
+      } else {
+        const response = await this.aiClient.assessUnderwriting({
+          application_id: loan.app_id,
+          loan_id: loanId,
+          requested_amount: loan.amount,
+          bank_name: loan.bank_name,
+          policies: policyData,
+          ...options,
+        });
+        assessment = response.data?.data;
+      }
     } catch (err) {
       const aiMsg = err.response?.data?.message || err.response?.data?.detail || err.message;
       throw ApiError.internal(`AI underwriting service error: ${aiMsg}`);
     }
 
     if (!assessment) throw ApiError.internal('AI underwriting returned an empty assessment.');
+
+    
+    if (assessment.status === 'queued' || assessment.job_id) {
+      logger.info(`[Underwriting] Assessment queued for loan=${loanId}. Job ID: ${assessment.job_id}`);
+      return { loan_id: loanId, status: 'queued', job_id: assessment.job_id };
+    }
 
     const riskScore = assessment.risk_score || loan.risk_score;
     await this.loanRepo.updateUnderwritingAssessment(loanId, assessment, riskScore);
@@ -147,6 +157,17 @@ class UnderwritingService {
     }
 
     return updatedLoan;
+  }
+
+  async getQueueJobStatus(jobId) {
+    try {
+      const response = await this.aiClient.getQueueJobStatus(jobId);
+      return response.data?.data;
+    } catch (err) {
+      if (err.response?.status === 404) return null;
+      logger.error(`[Underwriting] Error fetching AI queue job status: ${err.message}`, err.response?.data);
+      throw ApiError.internal('Failed to fetch AI queue job status');
+    }
   }
 }
 

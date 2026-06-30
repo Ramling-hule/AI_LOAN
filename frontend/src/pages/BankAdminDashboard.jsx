@@ -39,17 +39,17 @@ export default function BankAdminDashboard() {
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Pagination states
+  
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
 
-  // Search and Filter states
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  // Modal Review States
+  
   const [selectedApp, setSelectedApp] = useState(null);
   const [historyLogs, setHistoryLogs] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -91,7 +91,7 @@ export default function BankAdminDashboard() {
     return () => clearInterval(interval);
   }, [reevaluatingLoan, assessingLoan]);
 
-  // RAG Chat States
+  
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatting, setIsChatting] = useState(false);
@@ -139,13 +139,13 @@ export default function BankAdminDashboard() {
     }
   }, [chatMessages, activeReviewTab]);
 
-  // Parameter extraction states
+  
   const [extractionResult, setExtractionResult] = useState(null);
   const [loadingExtraction, setLoadingExtraction] = useState(false);
   const [triggeringExtraction, setTriggeringExtraction] = useState(false);
   const [extractionError, setExtractionError] = useState('');
 
-  // Audit Logs states
+  
   const [auditLogs, setAuditLogs] = useState([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
   const [auditPage, setAuditPage] = useState(1);
@@ -154,16 +154,16 @@ export default function BankAdminDashboard() {
   const [auditStatusFilter, setAuditStatusFilter] = useState('all');
   const [expandedAuditLogs, setExpandedAuditLogs] = useState({});
 
-  // Main Dashboard View Toggle
+  
   const [dashboardView, setDashboardView] = useState('loans');
 
-  // Confidential guidelines states
+  
   const [policies, setPolicies] = useState([]);
   const [loadingPolicies, setLoadingPolicies] = useState(false);
   const [auditAppId, setAuditAppId] = useState('');
   const [viewingConfidentialDoc, setViewingConfidentialDoc] = useState(null);
 
-  // Policy upload form states
+  
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadDesc, setUploadDesc] = useState('');
   const [uploadFile, setUploadFile] = useState(null);
@@ -177,12 +177,12 @@ export default function BankAdminDashboard() {
 
   const auditedApp = applications.find((app) => app._id === auditAppId);
 
-  // PDF Preview State
+  
   const [previewUrl, setPreviewUrl] = useState('');
   const [previewTitle, setPreviewTitle] = useState('');
   const [previewType, setPreviewType] = useState('');
 
-  // Fetch applications matching the underwriter's bank
+  
   const fetchApplications = async () => {
     try {
       setLoading(true);
@@ -234,19 +234,64 @@ export default function BankAdminDashboard() {
     }
   };
 
+  const pollQueueJob = async (jobId, actionName) => {
+    let isDone = false;
+    let errorMsg = '';
+    let attempts = 0;
+    const MAX_ATTEMPTS = 36; 
+    while (!isDone && attempts < MAX_ATTEMPTS) {
+      await new Promise(r => setTimeout(r, 5000));
+      attempts++;
+      try {
+        const res = await underwritingApi.getQueueStatus(jobId);
+        const jobStatus = res.data?.data;
+        if (jobStatus?.status === 'completed') {
+          isDone = true;
+        } else if (jobStatus?.status === 'failed') {
+          isDone = true;
+          errorMsg = jobStatus.error_message || jobStatus.error || `${actionName} failed.`;
+        } else if (!jobStatus) {
+          isDone = true;
+          errorMsg = 'Lost connection to async job.';
+        }
+      } catch (err) {
+        
+        isDone = true;
+        if (err.response?.status === 404) {
+          errorMsg = 'Job not found in queue.';
+        } else {
+          errorMsg = `${actionName}: server error (${err.response?.status || 'network'}).`;
+        }
+      }
+    }
+    if (!isDone) {
+      errorMsg = `${actionName} timed out after 3 minutes.`;
+    }
+    if (errorMsg) throw new Error(errorMsg);
+  };
+
   const handleTriggerExtraction = async (loanId, force = false) => {
     setTriggeringExtraction(true);
     setExtractionError('');
     try {
+      let data;
       if (force) {
-        await extractionApi.reExtractLoan(loanId);
+        const res = await extractionApi.reExtractLoan(loanId);
+        data = res.data;
       } else {
-        await extractionApi.triggerExtraction(loanId);
+        const res = await extractionApi.triggerExtraction(loanId);
+        data = res.data;
       }
+      
+      const payload = data.data;
+      if (payload?.status === 'queued' && payload?.job_id) {
+        await pollQueueJob(payload.job_id, 'Parameter extraction');
+      }
+
       await loadExtractionResult(loanId);
       await fetchApplications();
     } catch (err) {
-      setExtractionError(err.response?.data?.message || 'Failed to execute parameter extraction pipeline.');
+      setExtractionError(err.message || err.response?.data?.message || 'Failed to execute parameter extraction pipeline.');
     } finally {
       setTriggeringExtraction(false);
     }
@@ -432,13 +477,20 @@ export default function BankAdminDashboard() {
     }
   };
 
+  const parseAssessment = (payload) => {
+    if (typeof payload === 'string') {
+      try { return JSON.parse(payload); } catch(e) { return payload; }
+    }
+    return payload;
+  };
+
   const loadUnderwritingReport = async (loanId) => {
     setLoadingAssessment(true);
     setAssessmentError('');
     setUnderwritingAssessment(null);
     try {
       const { data } = await underwritingApi.getReport(loanId);
-      setUnderwritingAssessment(data.data?.assessment || data.data);
+      setUnderwritingAssessment(parseAssessment(data.data?.assessment || data.data));
     } catch (err) {
       if (err.response?.status === 404) {
         setUnderwritingAssessment(null);
@@ -455,10 +507,16 @@ export default function BankAdminDashboard() {
     setAssessmentError('');
     try {
       const { data } = await underwritingApi.assessLoan(loanId);
-      setUnderwritingAssessment(data.data?.assessment || data.data);
+      const payload = data.data?.assessment || data.data;
+      if (payload?.status === 'queued' && payload?.job_id) {
+        await pollQueueJob(payload.job_id, 'Underwriting assessment');
+        await loadUnderwritingReport(loanId);
+      } else {
+        setUnderwritingAssessment(parseAssessment(payload));
+      }
       await fetchApplications();
     } catch (err) {
-      setAssessmentError(err.response?.data?.message || 'AI Underwriting evaluation failed.');
+      setAssessmentError(err.message || err.response?.data?.message || 'AI Underwriting evaluation failed.');
     } finally {
       setAssessingLoan(false);
     }
@@ -469,11 +527,17 @@ export default function BankAdminDashboard() {
     setAssessmentError('');
     try {
       const { data } = await underwritingApi.reevaluateLoan(loanId);
-      setUnderwritingAssessment(data.data?.assessment || data.data);
+      const payload = data.data?.assessment || data.data;
+      if (payload?.status === 'queued' && payload?.job_id) {
+        await pollQueueJob(payload.job_id, 'Re-evaluation pipeline');
+        await loadUnderwritingReport(loanId);
+      } else {
+        setUnderwritingAssessment(parseAssessment(payload));
+      }
       await loadExtractionResult(loanId);
       await fetchApplications();
     } catch (err) {
-      setAssessmentError(err.response?.data?.message || 'AI Credit re-evaluation workflow failed.');
+      setAssessmentError(err.message || err.response?.data?.message || 'AI Credit re-evaluation workflow failed.');
     } finally {
       setReevaluatingLoan(false);
     }
@@ -522,6 +586,10 @@ export default function BankAdminDashboard() {
     setExpandedLogs(false);
     setActiveReviewTab('parameters');
     setUnderwritingAssessment(null);
+    setLoadingAssessment(false);
+    setAssessingLoan(false);
+    setReevaluatingLoan(false);
+    setAssessmentError('');
     loadHistoryLogs(app._id);
   };
 
@@ -550,14 +618,14 @@ export default function BankAdminDashboard() {
         missingDocs
       );
 
-      // Update selected app state
+      
       setSelectedApp(data.data);
-      // Reload full table
+      
       await fetchApplications();
-      // Reload history logs
+      
       await loadHistoryLogs(selectedApp._id);
 
-      // Reset transition inputs
+      
       setNextStatus('');
       setTransitionNotes('');
       setMissingDocs([]);
@@ -580,7 +648,7 @@ export default function BankAdminDashboard() {
     navigate('/login');
   };
 
-  // Metrics calculations (safeguard drafts)
+  
   const nonDraftApps = applications.filter((app) => app.status !== 'draft');
   const inboxCount = nonDraftApps.filter((app) =>
     ['submitted', 'eligibility_check', 'agent_review', 'missing_info'].includes(app.status)
@@ -592,7 +660,7 @@ export default function BankAdminDashboard() {
     ? Math.round(nonDraftApps.reduce((sum, app) => sum + (app.risk_score || 600), 0) / nonDraftApps.length)
     : 'N/A';
 
-  // Badges helper
+  
   const getStatusBadge = (status) => {
     const configs = {
       draft: { style: 'bg-slate-500/10 text-slate-400 border-slate-500/20', label: 'Draft' },
@@ -608,7 +676,7 @@ export default function BankAdminDashboard() {
     return <Badge className={`${c.style} capitalize`}>{c.label}</Badge>;
   };
 
-  // Valid next statuses helper
+  
   const getValidNextStatuses = (status) => {
     const VALID_TRANSITIONS = {
       submitted: [
@@ -636,7 +704,7 @@ export default function BankAdminDashboard() {
     return VALID_TRANSITIONS[status] || [];
   };
 
-  // Trigger PDF/Image Viewer Modal
+  
   const openPreview = (doc) => {
     if (!doc?.url) return;
     setPreviewUrl(doc.url);
@@ -646,13 +714,13 @@ export default function BankAdminDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col relative overflow-hidden">
-      {/* Background decoration */}
+      {}
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl" />
       </div>
 
-      {/* Top Navbar */}
+      {}
       <header className="border-b border-white/5 bg-slate-900/60 backdrop-blur-md sticky top-0 z-50 relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -686,10 +754,10 @@ export default function BankAdminDashboard() {
         </div>
       </header>
 
-      {/* Main Content */}
+      {}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6 relative z-10">
         
-        {/* Welcome banner */}
+        {}
         <div className="bg-gradient-to-r from-emerald-600/10 via-teal-600/5 to-transparent border border-white/5 rounded-3xl p-6 sm:p-8 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
           <div className="relative z-10 space-y-1">
@@ -701,7 +769,7 @@ export default function BankAdminDashboard() {
           </div>
         </div>
 
-        {/* Metrics cards */}
+        {}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="p-4 pb-2">
@@ -744,7 +812,7 @@ export default function BankAdminDashboard() {
           </Card>
         </div>
 
-        {/* Main Tab Controller */}
+        {}
         <div className="flex items-center gap-2 p-1 bg-slate-900/60 border border-white/5 rounded-2xl w-fit relative z-10">
           <button
             onClick={() => setDashboardView('loans')}
@@ -775,10 +843,10 @@ export default function BankAdminDashboard() {
 
         {dashboardView === 'loans' ? (
           <>
-            {/* Grid for Branch Details & Credit Policy Guidelines */}
+            {}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 flex">
-            {/* Bank Branch and Officer Info */}
+            {}
             <Card className="w-full flex flex-col justify-between">
               <CardHeader className="pb-3 border-b border-white/5 py-4">
                 <CardTitle className="text-sm flex items-center gap-2">
@@ -808,7 +876,7 @@ export default function BankAdminDashboard() {
           </div>
 
           <div className="lg:col-span-2">
-            {/* Confidential Credit Rules & Policy Guidelines */}
+            {}
             <Card className="h-full">
               <CardHeader className="pb-3 border-b border-white/5 flex flex-row items-center justify-between py-4">
                 <div>
@@ -824,7 +892,7 @@ export default function BankAdminDashboard() {
               <CardContent className="p-5">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
                   
-                  {/* Left Panel: Confidential Policy Documents */}
+                  {}
                   <div className="space-y-4">
                     <div className="flex justify-between items-center border-b border-white/5 pb-1">
                       <h5 className="font-bold text-slate-300 uppercase tracking-wider text-[10px]">
@@ -912,7 +980,7 @@ export default function BankAdminDashboard() {
                             {uploadingPolicy ? (
                               <>
                                 <Loader2 className="w-3 h-3 animate-spin" />
-                                Saving...
+                                Processing policy embeddings...
                               </>
                             ) : (
                               editingPolicyId ? 'Save Changes' : 'Upload'
@@ -984,7 +1052,7 @@ export default function BankAdminDashboard() {
                     )}
                   </div>
 
-                  {/* Right Panel: Live Underwriting Policy Auditor */}
+                  {}
                   <div className="space-y-4 md:border-l md:border-white/5 md:pl-6">
                     <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1 uppercase tracking-wider text-[10px] flex justify-between">
                       <span>Live Policy Auditor Widget</span>
@@ -1015,9 +1083,9 @@ export default function BankAdminDashboard() {
                             <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[9px]">Score: {auditedApp.risk_score}</Badge>
                           </div>
 
-                          {/* Rule Checks */}
+                          {}
                           <div className="space-y-2 text-[11px]">
-                            {/* Rule 1: Turnover */}
+                            {}
                             <div className="flex justify-between items-start">
                               <div className="pr-2">
                                 <span className="text-slate-300 block font-medium">1. Annual Turnover (Min ₹50L)</span>
@@ -1032,7 +1100,7 @@ export default function BankAdminDashboard() {
                               </span>
                             </div>
 
-                            {/* Rule 2: Risk Rating */}
+                            {}
                             <div className="flex justify-between items-start">
                               <div className="pr-2">
                                 <span className="text-slate-300 block font-medium">2. Credit Risk Score (Min 650)</span>
@@ -1047,7 +1115,7 @@ export default function BankAdminDashboard() {
                               </span>
                             </div>
 
-                            {/* Rule 3: Collateral Requirement */}
+                            {}
                             <div className="flex justify-between items-start">
                               <div className="pr-2">
                                 <span className="text-slate-300 block font-medium">3. Collateral Check (&gt;₹25L)</span>
@@ -1064,7 +1132,7 @@ export default function BankAdminDashboard() {
                               </span>
                             </div>
 
-                            {/* Rule 4: Mandatory Documents */}
+                            {}
                             <div className="flex justify-between items-start">
                               <div className="pr-2">
                                 <span className="text-slate-300 block font-medium">4. Core KYC Documents</span>
@@ -1080,7 +1148,7 @@ export default function BankAdminDashboard() {
                             </div>
                           </div>
 
-                          {/* Summary Recommendation */}
+                          {}
                           <div className={`mt-3 p-3 rounded-xl border flex flex-col items-center justify-center text-center gap-1.5 ${
                             auditedApp.financial_info?.annual_turnover >= 5000000 &&
                             auditedApp.risk_score >= 650 &&
@@ -1114,7 +1182,7 @@ export default function BankAdminDashboard() {
           </div>
         </div>
 
-        {/* Applications Search & Filter Bar */}
+        {}
         <div className="flex flex-col sm:flex-row gap-4 bg-slate-900/60 border border-white/5 p-4 rounded-2xl relative z-10">
           <form 
             onSubmit={(e) => {
@@ -1185,7 +1253,7 @@ export default function BankAdminDashboard() {
           </div>
         </div>
 
-        {/* Incoming Applications Queue */}
+        {}
         <Card>
           <CardHeader className="border-b border-white/5 flex flex-row items-center justify-between py-4">
             <CardTitle className="text-sm flex items-center gap-2">
@@ -1260,7 +1328,7 @@ export default function BankAdminDashboard() {
           </CardContent>
         </Card>
 
-        {/* Applications Pagination Controls */}
+        {}
         {totalPages > 1 && (
           <div className="flex items-center justify-between border border-white/5 px-6 py-4 bg-slate-900/20 rounded-2xl relative z-10">
             <span className="text-xs text-slate-400">
@@ -1286,9 +1354,9 @@ export default function BankAdminDashboard() {
         )}
       </>
     ) : (
-      /* SECURITY AUDIT TRAIL VIEW */
+      
       <div className="space-y-6 relative z-10 animate-fade-in">
-        {/* Search & Filters */}
+        {}
         <div className="flex flex-col sm:flex-row gap-4 bg-slate-900/60 border border-white/5 p-4 rounded-2xl">
           <form
             onSubmit={(e) => {
@@ -1351,7 +1419,7 @@ export default function BankAdminDashboard() {
           </div>
         </div>
 
-        {/* Audit Logs Table */}
+        {}
         <Card>
           <CardHeader className="border-b border-white/5 py-4">
             <CardTitle className="text-sm flex items-center gap-2">
@@ -1471,7 +1539,7 @@ export default function BankAdminDashboard() {
           </CardContent>
         </Card>
 
-        {/* Audit Pagination Controls */}
+        {}
         {auditTotalPages > 1 && (
           <div className="flex items-center justify-between border border-white/5 px-6 py-4 bg-slate-900/20 rounded-2xl">
             <span className="text-xs text-slate-400">
@@ -1500,14 +1568,14 @@ export default function BankAdminDashboard() {
 
       </main>
 
-      {/* =================================================================== */}
-      {/* CASE REVIEW MODAL */}
-      {/* =================================================================== */}
+      {}
+      {}
+      {}
       {selectedApp && (
         <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm overflow-y-auto">
           <div className="relative w-full max-w-4xl bg-slate-900 border border-white/10 rounded-3xl overflow-hidden shadow-2xl animate-scale-up my-8 max-h-[90vh] flex flex-col justify-between">
             
-            {/* Modal Header */}
+            {}
             <div className="p-5 border-b border-white/5 flex items-center justify-between bg-slate-950/50">
               <div>
                 <span className="text-[10px] font-bold tracking-wider text-slate-300 uppercase">Case Evaluation File: {selectedApp.appId}</span>
@@ -1524,7 +1592,7 @@ export default function BankAdminDashboard() {
               </button>
             </div>
 
-            {/* Tab Navigation */}
+            {}
             <div className="px-6 bg-slate-900 border-b border-white/5 flex gap-4 text-xs">
               <button
                 onClick={() => setActiveReviewTab('parameters')}
@@ -1577,18 +1645,18 @@ export default function BankAdminDashboard() {
               </button>
             </div>
 
-            {/* Modal Body */}
+            {}
             <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
               {activeReviewTab === 'parameters' ? (
                 <>
-                  {/* STATUS TIMELINE */}
+                  {}
                   <div className="space-y-3">
                     <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
                       <Layers className="w-3.5 h-3.5 text-blue-400" />
                       Status Progression Timeline
                     </h4>
                     
-                    {/* Horizontal Timeline Tracker */}
+                    {}
                     <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex justify-between items-center relative overflow-x-auto min-w-[500px]">
                       {[
                         { key: 'submitted', label: 'Submitted' },
@@ -1601,7 +1669,7 @@ export default function BankAdminDashboard() {
                         const currentIdx = statusesOrdered.indexOf(selectedApp.status);
                         const stepIdx = statusesOrdered.indexOf(step.key);
 
-                        // Determine step styling
+                        
                         let isCompleted = stepIdx < currentIdx && selectedApp.status !== 'rejected';
                         let isActive = selectedApp.status === step.key;
                         let isAlert = step.isAlert && selectedApp.status === 'missing_info';
@@ -1641,11 +1709,11 @@ export default function BankAdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Grid detail blocks */}
+                  {}
                   <div className="grid sm:grid-cols-2 gap-4">
-                    {/* Column 1: Financial & Parameters */}
+                    {}
                     <div className="space-y-4">
-                      {/* Loan Parameters */}
+                      {}
                       <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
                         <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1 flex justify-between">
                           <span>Loan parameters</span>
@@ -1671,7 +1739,7 @@ export default function BankAdminDashboard() {
                         </div>
                       </div>
 
-                      {/* Business & Promoter details */}
+                      {}
                       <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
                         <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1">Entity structure</h5>
                         <div className="grid grid-cols-2 gap-2.5">
@@ -1699,9 +1767,9 @@ export default function BankAdminDashboard() {
                       </div>
                     </div>
 
-                    {/* Column 2: Uploads Audit & Behavioural */}
+                    {}
                     <div className="space-y-4">
-                      {/* Documents Audit list */}
+                      {}
                       <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-2">
                         <h5 className="font-bold text-slate-300 border-b border-white/5 pb-1">Uploaded Credential Audit</h5>
                         <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
@@ -1722,7 +1790,7 @@ export default function BankAdminDashboard() {
                         </div>
                       </div>
 
-                      {/* Applicant Loan Motive & User Reasoning */}
+                      {}
                       <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl space-y-3">
                         <h5 className="font-bold text-slate-200 border-b border-white/5 pb-1 uppercase tracking-wider text-[10px]">
                           Applicant Loan Motive & User Reasoning
@@ -1761,7 +1829,7 @@ export default function BankAdminDashboard() {
                     </div>
                   </div>
 
-                  {/* STATUS CHANGE FORM SECTION */}
+                  {}
                   {!['approved', 'rejected', 'disbursed'].includes(selectedApp.status) ? (
                     <div className="bg-blue-600/[0.02] border border-blue-500/10 rounded-2xl p-5 space-y-4">
                       <h4 className="font-bold text-white flex items-center gap-2 border-b border-white/5 pb-2 text-[11px] uppercase tracking-wider">
@@ -1778,7 +1846,7 @@ export default function BankAdminDashboard() {
 
                       <form onSubmit={handleStatusChangeSubmit} className="space-y-4">
                         <div className="grid sm:grid-cols-2 gap-4">
-                          {/* Target status */}
+                          {}
                           <div className="space-y-1.5">
                             <label className="block font-semibold text-slate-300">Target status</label>
                             <select
@@ -1798,7 +1866,7 @@ export default function BankAdminDashboard() {
                             </select>
                           </div>
 
-                          {/* Notes / Comment */}
+                          {}
                           <div className="space-y-1.5">
                             <label className="block font-semibold text-slate-300">Administrative Transition Notes</label>
                             <input
@@ -1811,7 +1879,7 @@ export default function BankAdminDashboard() {
                           </div>
                         </div>
 
-                        {/* Missing Document Selectors (Conditional) */}
+                        {}
                         {nextStatus === 'missing_info' && (
                           <div className="space-y-2 border-t border-white/5 pt-3 animate-fade-in">
                             <span className="block font-semibold text-slate-300 text-[10px] uppercase tracking-wider flex items-center gap-1.5 text-red-400">
@@ -1873,7 +1941,7 @@ export default function BankAdminDashboard() {
                     </div>
                   )}
 
-                  {/* STATUS HISTORY ACTIVITY LOG */}
+                  {}
                   <div className="border border-white/5 rounded-2xl overflow-hidden">
                     <div
                       onClick={() => setExpandedLogs(!expandedLogs)}
@@ -2320,7 +2388,7 @@ export default function BankAdminDashboard() {
                             <span className={`text-3xl font-extrabold font-mono ${
                               underwritingAssessment.risk_level === 'LOW' ? 'text-emerald-400' :
                               underwritingAssessment.risk_level === 'MEDIUM' ? 'text-amber-400' :
-                              'text-red-400'
+                              'text-amber-400'
                             }`}>
                               {underwritingAssessment.risk_score}
                             </span>
@@ -2329,190 +2397,76 @@ export default function BankAdminDashboard() {
                           <span className={`text-[10px] font-bold mt-1 uppercase ${
                             underwritingAssessment.risk_level === 'LOW' ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' :
                             underwritingAssessment.risk_level === 'MEDIUM' ? 'text-amber-500 bg-amber-500/10 border-amber-500/20' :
-                            'text-red-500 bg-red-500/10 border-red-500/20'
+                            'text-amber-500 bg-amber-500/10 border-amber-500/20'
                           } border px-2 py-0.5 rounded-full w-fit`}>
-                            {underwritingAssessment.risk_level} RISK
-                          </span>
-                        </div>
-
-                        <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between min-h-[90px]">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Lending Recommendation</span>
-                          <div className="mt-2">
-                            <span className={`text-xs font-bold uppercase tracking-wide px-3 py-1.5 rounded-xl border ${
-                              underwritingAssessment.approval_recommendation === 'RECOMMEND_APPROVE' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
-                              underwritingAssessment.approval_recommendation === 'RECOMMEND_REJECT' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
-                              'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                            }`}>
-                              {(underwritingAssessment.approval_recommendation || '').replace('_', ' ')}
-                            </span>
-                          </div>
-                          <span className="text-[10px] text-slate-300 mt-2">
-                            Final decision remains with Bank Admin.
-                          </span>
-                        </div>
-
-                        <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between min-h-[90px] sm:col-span-1">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Assessment Status</span>
-                          <div className="mt-2 text-xs font-medium text-slate-200 leading-normal line-clamp-3">
-                            {underwritingAssessment.eligibility_summary}
-                          </div>
-                          <span className="text-[9px] text-slate-300">
-                            Evaluated: {underwritingAssessment.assessed_at ? new Date(underwritingAssessment.assessed_at).toLocaleDateString() : new Date().toLocaleDateString()}
+                            {underwritingAssessment.risk_level || 'EVALUATED'} RISK
                           </span>
                         </div>
                       </div>
 
-                      {/* Rejection notice (if recommendation is REJECT) */}
-                      {underwritingAssessment.approval_recommendation === 'RECOMMEND_REJECT' && underwritingAssessment.rejection_explanation && (
-                        <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-2xl flex items-start gap-3">
-                          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5 text-red-400" />
-                          <div>
-                            <span className="font-bold text-xs uppercase tracking-wider block">AI Rejection Explanation</span>
-                            <p className="text-[11px] text-slate-300 mt-1 leading-normal">
-                              {underwritingAssessment.rejection_explanation}
-                            </p>
+                      {/* AI Extracted Reasoning */}
+                      <div className="space-y-3 pt-4">
+                        <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                          <MessageSquare className="w-4 h-4 text-blue-400" />
+                          AI Underwriting Reasoning
+                        </h4>
+
+                        <div className="grid sm:grid-cols-1 lg:grid-cols-2 gap-3.5">
+                          {Object.entries(underwritingAssessment)
+                            .filter(([key, val]) => 
+                              typeof val === 'string' && 
+                              !['risk_level', 'risk_score', 'execution_timestamp', 'prompt_version', 'assessed_at', 'status', 'job_id', 'id'].includes(key)
+                            )
+                            .map(([key, value], idx) => (
+                              <div key={idx} className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col gap-3">
+                                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                  {key.replace(/_/g, ' ')}
+                                </span>
+                                <p className="text-slate-200 text-[11.5px] leading-relaxed whitespace-pre-wrap">
+                                  {value}
+                                </p>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+
+                      {/* AI Policy Evaluations */}
+                      {underwritingAssessment.policies_evaluation && underwritingAssessment.policies_evaluation.length > 0 && (
+                        <div className="space-y-3 pt-4 border-t border-white/5">
+                          <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                            Policy Adherence Evaluation
+                          </h4>
+                          <div className="flex flex-col gap-3">
+                            {underwritingAssessment.policies_evaluation.map((policy, idx) => (
+                              <div key={idx} className={`p-4 border rounded-2xl flex flex-col gap-2 ${
+                                policy.status === 'PASSED' 
+                                  ? 'bg-emerald-500/5 border-emerald-500/20' 
+                                  : 'bg-red-500/5 border-red-500/20'
+                              }`}>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                                    {policy.status === 'PASSED' ? (
+                                      <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                    ) : (
+                                      <AlertCircle className="w-4 h-4 text-red-500" />
+                                    )}
+                                    {policy.policy_name}
+                                  </span>
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                    policy.status === 'PASSED' ? 'text-emerald-500 bg-emerald-500/10' : 'text-red-500 bg-red-500/10'
+                                  }`}>
+                                    {policy.status}
+                                  </span>
+                                </div>
+                                <p className="text-slate-300 text-[11.5px] leading-relaxed ml-6">
+                                  {policy.reason}
+                                </p>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       )}
-
-                      {/* Credit Policy Checklist Grid */}
-                      <div className="space-y-3">
-                        <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
-                          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                          Mandatory Credit Policy Audit Checklist
-                        </h4>
-
-                        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                          {[
-                            { title: 'Turnover Eligibility', data: underwritingAssessment.checks?.turnover_eligibility },
-                            { title: 'GST Consistency Check', data: underwritingAssessment.checks?.gst_consistency },
-                            { title: 'Outstanding Debt/Liabilities', data: underwritingAssessment.checks?.existing_liabilities },
-                            { title: 'Cheque Bounce Patterns', data: underwritingAssessment.checks?.cheque_bounce_patterns },
-                            { title: 'Suspicious Ledger Activity', data: underwritingAssessment.checks?.suspicious_behaviour },
-                          ].map((check, idx) => {
-                            const status = check.data?.status || 'WARNING';
-                            const details = check.data?.details || 'Check details not available';
-                            return (
-                              <div key={idx} className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col justify-between gap-3">
-                                <div className="flex justify-between items-start gap-2">
-                                  <span className="text-xs font-semibold text-white block">{check.title}</span>
-                                  <Badge className={
-                                    status === 'PASS' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px]' :
-                                    status === 'FAIL' ? 'bg-red-500/10 text-red-400 border-red-500/20 text-[9px]' :
-                                    'bg-amber-500/10 text-amber-400 border-amber-500/20 text-[9px]'
-                                  }>
-                                    {status}
-                                  </Badge>
-                                </div>
-                                <p className="text-slate-300 text-[11px] leading-normal">{details}</p>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Bank Policy Compliance Audit */}
-                      <div className="space-y-3 pt-2">
-                        <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
-                          <ShieldAlert className="w-4 h-4 text-amber-400" />
-                          Confidential Bank Policy Compliance Audit
-                        </h4>
-
-                        <div className="space-y-3">
-                          {(() => {
-                            const policyAudits = underwritingAssessment.policy_audits || policies.map(policy => {
-                              let checkData = null;
-                              const titleLower = policy.title.toLowerCase();
-                              if (titleLower.includes('underwriting') || titleLower.includes('sme')) {
-                                checkData = underwritingAssessment.checks?.turnover_eligibility;
-                              } else if (titleLower.includes('fraud') || titleLower.includes('kyc')) {
-                                checkData = underwritingAssessment.checks?.gst_consistency || underwritingAssessment.checks?.suspicious_behaviour;
-                              } else if (titleLower.includes('exposure') || titleLower.includes('appetite') || titleLower.includes('collateral')) {
-                                checkData = underwritingAssessment.checks?.existing_liabilities;
-                              }
-                              
-                              return {
-                                policy_id: policy.id || policy._id,
-                                policy_title: policy.title,
-                                status: checkData?.status || 'WARNING',
-                                details: checkData?.details || `Compliance verification details pending.`
-                              };
-                            });
-
-                            if (!policyAudits || policyAudits.length === 0) {
-                              return <p className="text-slate-400 italic text-[11px] bg-slate-950 p-4 border border-white/5 rounded-2xl">No bank policies registered to audit against.</p>;
-                            }
-
-                            return policyAudits.map((audit, idx) => {
-                              const policyId = audit.policy_id;
-                              const originalPolicy = policies.find(p => (p.id || p._id) === policyId);
-                              const description = originalPolicy?.description || "Bank underwriting directive limit";
-                              const status = audit.status || 'WARNING';
-
-                              return (
-                                <div key={idx} className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col md:flex-row justify-between gap-4">
-                                  <div className="space-y-2 flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs font-semibold text-white">{audit.policy_title}</span>
-                                      <Badge className={
-                                        status === 'PASS' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px]' :
-                                        status === 'FAIL' ? 'bg-red-500/10 text-red-400 border-red-500/20 text-[9px]' :
-                                        'bg-amber-500/10 text-amber-400 border-amber-500/20 text-[9px]'
-                                      }>
-                                        {status}
-                                      </Badge>
-                                    </div>
-                                    <p className="text-slate-400 text-[10px] italic">{description}</p>
-                                    <div className="bg-white/[0.02] border border-white/5 p-2.5 rounded-xl text-slate-300 text-[11px]">
-                                      <strong>AI Findings:</strong> {audit.details}
-                                    </div>
-                                  </div>
-
-                                  {(status === 'FAIL' || status === 'WARNING') && !['approved', 'rejected', 'disbursed'].includes(selectedApp.status) && (
-                                    <div className="flex flex-row md:flex-col justify-end gap-2 shrink-0 md:w-48 align-middle self-center">
-                                      <button
-                                        onClick={() => handleNotifyPolicyIssue(audit.policy_title, audit.details)}
-                                        disabled={sendingPolicyNotification[audit.policy_title]}
-                                        className="w-full px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-1.5"
-                                      >
-                                        {sendingPolicyNotification[audit.policy_title] ? (
-                                          <>
-                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                            <span>Notifying...</span>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <AlertCircle className="w-3.5 h-3.5" />
-                                            <span>Notify SME User</span>
-                                          </>
-                                        )}
-                                      </button>
-                                      <button
-                                        onClick={() => handleBypassPolicyApprove(audit.policy_title, audit.details)}
-                                        className="w-full px-3 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-1.5"
-                                      >
-                                        <ShieldCheck className="w-3.5 h-3.5" />
-                                        <span>Bypass & Approve</span>
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            });
-                          })()}
-                        </div>
-                      </div>
-
-                      {/* Explainable Reasoning */}
-                      <div className="space-y-2">
-                        <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
-                          <MessageSquare className="w-4 h-4 text-blue-400" />
-                          Explainable Credit Reasoning & Audit Trail
-                        </h4>
-                        <div className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl text-slate-300 leading-relaxed text-[11px] space-y-2">
-                          <p className="whitespace-pre-line">{underwritingAssessment.reasoning}</p>
-                        </div>
-                      </div>
 
                       {/* Action buttons */}
                       <div className="flex justify-end pt-4 border-t border-white/5 gap-3">
@@ -2590,7 +2544,7 @@ export default function BankAdminDashboard() {
                 <div>
                   <span className="text-[10px] font-bold tracking-widest text-red-400 uppercase flex items-center gap-1.5">
                     <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
-                    {isModalEditing ? 'EDIT MODE' : doc.is_system_default ? 'CONFIDENTIAL // BANK INTERNAL USE ONLY' : 'BANK INTERNAL USE ONLY // CUSTOM POLICY'}
+                    {isModalEditing ? 'EDIT MODE' : doc.is_system_default ? 'CONFIDENTIAL 
                   </span>
                   <h3 className="text-base font-extrabold text-white mt-1">
                     {isModalEditing ? `Edit: ${doc.title}` : doc.title}
@@ -2617,7 +2571,7 @@ export default function BankAdminDashboard() {
                 </div>
               </div>
 
-              {/* Modal Content */}
+              {}
               {isModalEditing ? (
                 <form onSubmit={handleSaveEditFromModal} className="flex-1 overflow-y-auto p-6 space-y-4">
                   {uploadPolicyError && (
@@ -2676,7 +2630,7 @@ export default function BankAdminDashboard() {
                       {uploadingPolicy ? (
                         <>
                           <Loader2 className="w-3 h-3 animate-spin" />
-                          Saving...
+                          Processing policy embeddings...
                         </>
                       ) : (
                         'Save Changes'

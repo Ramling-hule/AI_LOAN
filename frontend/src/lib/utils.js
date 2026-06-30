@@ -1,17 +1,17 @@
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-// ---------------------------------------------------------------------------
-// cn — shadcn/ui utility for merging Tailwind classes safely
-// ---------------------------------------------------------------------------
+
+
+
 
 export function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
-// ---------------------------------------------------------------------------
-// Format currency (INR for SME loans in India)
-// ---------------------------------------------------------------------------
+
+
+
 
 export function formatCurrency(amount, currency = 'INR') {
   return new Intl.NumberFormat('en-IN', {
@@ -21,9 +21,9 @@ export function formatCurrency(amount, currency = 'INR') {
   }).format(amount);
 }
 
-// ---------------------------------------------------------------------------
-// Format date
-// ---------------------------------------------------------------------------
+
+
+
 
 export function formatDate(date, options = {}) {
   return new Intl.DateTimeFormat('en-IN', {
@@ -34,9 +34,9 @@ export function formatDate(date, options = {}) {
   }).format(new Date(date));
 }
 
-// ---------------------------------------------------------------------------
-// Truncate text
-// ---------------------------------------------------------------------------
+
+
+
 
 export function truncate(str, maxLength = 50) {
   if (!str || str.length <= maxLength) {
@@ -45,9 +45,9 @@ export function truncate(str, maxLength = 50) {
   return `${str.slice(0, maxLength)}...`;
 }
 
-// ---------------------------------------------------------------------------
-// Get initials from a name
-// ---------------------------------------------------------------------------
+
+
+
 
 export function getInitials(name = '') {
   return name

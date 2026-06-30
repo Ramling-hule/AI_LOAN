@@ -1,14 +1,10 @@
-// ---------------------------------------------------------------------------
-// Standardized API response wrapper.
-// All successful responses use this shape for predictable client handling.
-// ---------------------------------------------------------------------------
+
+
+
+
 
 export class ApiResponse {
-  /**
-   * @param {number} statusCode - HTTP status code
-   * @param {*}      data       - Response payload
-   * @param {string} message    - Human-readable success message
-   */
+  
   constructor(statusCode, data = null, message = 'Success') {
     this.statusCode = statusCode;
     this.success = statusCode >= 200 && statusCode < 300;
@@ -16,9 +12,9 @@ export class ApiResponse {
     this.data = data;
   }
 
-  // ---------------------------------------------------------------------------
-  // Factory helpers
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
   static ok(data, message = 'OK') {
     return new ApiResponse(200, data, message);
@@ -32,10 +28,7 @@ export class ApiResponse {
     return new ApiResponse(204, null, message);
   }
 
-  /**
-   * Send this response via an Express res object.
-   * @param {import('express').Response} res
-   */
+  
   send(res) {
     return res.status(this.statusCode).json({
       success: this.success,

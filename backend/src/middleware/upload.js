@@ -1,7 +1,7 @@
 import multer from 'multer';
 import ApiError from '../utils/ApiError.js';
 
-// Memory storage to hold file buffer before sending to Cloudinary
+
 const storage = multer.memoryStorage();
 
 const ALLOWED_MIME_TYPES = [
@@ -29,7 +29,7 @@ export const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10 MB
+    fileSize: 10 * 1024 * 1024, 
   },
 });
 

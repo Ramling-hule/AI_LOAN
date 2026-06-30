@@ -1,6 +1,6 @@
-/** @type {import('tailwindcss').Config} */
+
 export default {
-  // Enable dark mode via class strategy
+  
   darkMode: ['class'],
 
   content: [
@@ -18,7 +18,7 @@ export default {
     },
     extend: {
       colors: {
-        // shadcn/ui CSS variable-based color system
+        
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',

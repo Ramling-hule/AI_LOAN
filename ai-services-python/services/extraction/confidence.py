@@ -22,10 +22,10 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-# ── Document priority weights ─────────────────────────────────────────────────
+
 
 DOCUMENT_PRIORITY: dict[str, float] = {
-    # Authoritative / audited sources
+    
     "audited_balance_sheet":     1.00,
     "audited_financials":        1.00,
     "itr":                       0.95,
@@ -40,7 +40,7 @@ DOCUMENT_PRIORITY: dict[str, float] = {
     "cin_certificate":           0.90,
     "pan_card":                  0.90,
     "llp_deed":                  0.88,
-    # Scanned / unverified
+    
     "ocr_scan":                  0.60,
     "scanned_document":          0.60,
     "handwritten":               0.40,
@@ -48,7 +48,7 @@ DOCUMENT_PRIORITY: dict[str, float] = {
     "unknown":                   0.50,
 }
 
-_DEFAULT_DOC_PRIORITY = 0.55   # for unrecognised document types
+_DEFAULT_DOC_PRIORITY = 0.55   
 
 
 def get_doc_priority(document_type: Optional[str]) -> float:
@@ -59,7 +59,7 @@ def get_doc_priority(document_type: Optional[str]) -> float:
     return DOCUMENT_PRIORITY.get(key, _DEFAULT_DOC_PRIORITY)
 
 
-# ── Re-rank score normalisation ───────────────────────────────────────────────
+
 
 def _normalise_rerank_score(raw_score: float) -> float:
     """
@@ -72,14 +72,14 @@ def _normalise_rerank_score(raw_score: float) -> float:
         return 0.0 if raw_score < 0 else 1.0
 
 
-# ── Main scorer ───────────────────────────────────────────────────────────────
+
 
 def compute_confidence(
-    retrieval_score: float = 0.0,    # cosine similarity [0, 1]
-    rerank_score: float = 0.0,       # raw CrossEncoder logit
-    regex_validated: bool = False,   # True if regex confirmed the value
+    retrieval_score: float = 0.0,    
+    rerank_score: float = 0.0,       
+    regex_validated: bool = False,   
     document_type: Optional[str] = None,
-    llm_confidence: float = 0.7,     # self-reported by the LLM [0, 1]
+    llm_confidence: float = 0.7,     
 ) -> float:
     """
     Compute the composite confidence for an extracted field.
@@ -94,23 +94,23 @@ def compute_confidence(
     Returns:
         Composite confidence score in [0.0, 1.0].
     """
-    # Factor 1: Retrieval similarity (already in [0, 1])
+    
     f_retrieval = max(0.0, min(1.0, retrieval_score))
 
-    # Factor 2: Re-rank score (normalised to [0, 1])
+    
     f_rerank = _normalise_rerank_score(rerank_score)
 
-    # Factor 3: Regex validation bonus
+    
     f_regex = 1.0 if regex_validated else 0.80
 
-    # Factor 4: Document authority priority
+    
     f_doc = get_doc_priority(document_type)
 
-    # Factor 5: LLM self-confidence (clamped to [0, 1])
+    
     f_llm = max(0.0, min(1.0, llm_confidence))
 
-    # Weighted geometric mean (gives more nuanced result than plain product)
-    # Weights: retrieval=0.20, rerank=0.25, regex=0.20, doc=0.15, llm=0.20
+    
+    
     weighted_log = (
         0.20 * math.log(max(f_retrieval, 1e-9))
         + 0.25 * math.log(max(f_rerank, 1e-9))
@@ -123,7 +123,7 @@ def compute_confidence(
 
 
 def score_extracted_field(
-    field: "ExtractedField",  # noqa: F821  (forward ref)
+    field: "ExtractedField",  
     regex_validated: bool = False,
 ) -> float:
     """
@@ -134,5 +134,5 @@ def score_extracted_field(
         rerank_score=field.rerank_score,
         regex_validated=regex_validated or field.source == "regex",
         document_type=field.document_type,
-        llm_confidence=field.confidence,  # treat stored value as LLM factor
+        llm_confidence=field.confidence,  
     )

@@ -3,10 +3,10 @@ import { useCallback } from 'react';
 
 import { useAuth } from '@/context/AuthContext.jsx';
 
-// ---------------------------------------------------------------------------
-// useRequireAuth — redirects unauthenticated users and checks roles.
-// Usage: const { user } = useRequireAuth(['admin', 'underwriter']);
-// ---------------------------------------------------------------------------
+
+
+
+
 
 export function useRequireAuth(allowedRoles = []) {
   const { user, isAuthenticated, hasRole } = useAuth();

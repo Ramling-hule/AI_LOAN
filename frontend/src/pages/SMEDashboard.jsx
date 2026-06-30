@@ -40,14 +40,14 @@ export default function SMEDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
 
-  // ── API BACKED STATES ─────────────────────────────────────────────────────
+  
   const [partnerBanks, setPartnerBanks] = useState([]);
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAppId, setSelectedAppId] = useState('');
 
-  // Status History & Tracker States
+  
   const [activeAppHistory, setActiveAppHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [expandedHistory, setExpandedHistory] = useState(false);
@@ -57,7 +57,7 @@ export default function SMEDashboard() {
   const [isUploadingDocCenter, setIsUploadingDocCenter] = useState(false);
   const [vectorizingDocs, setVectorizingDocs] = useState({});
 
-  // Bank Accounts & Stepper States
+  
   const [linkedAccounts, setLinkedAccounts] = useState([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [isLinking, setIsLinking] = useState(false);
@@ -86,7 +86,7 @@ export default function SMEDashboard() {
     }
   };
 
-  // 1. Fetch dashboard data on mount
+  
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
@@ -117,7 +117,7 @@ export default function SMEDashboard() {
     fetchDashboardData();
   }, []);
 
-  // Handle OTP timer countdown
+  
   useEffect(() => {
     let interval = null;
     if (isLinking && linkStep === 3 && otpTimer > 0) {
@@ -147,14 +147,14 @@ export default function SMEDashboard() {
     .filter((a) => ['submitted', 'eligibility_check', 'agent_review', 'missing_info'].includes(a.status))
     .length;
 
-  // Status History & Upload Hooks
+  
   const loadActiveAppHistory = async (appId) => {
     if (!appId) return;
     try {
       setLoadingHistory(true);
       const app = applications.find((a) => (a.appId || a.app_id) === appId);
       if (!app) return;
-      // Use the UUID id (not appId like APP-XXXX) for the API call
+      
       const { data } = await loanApi.getHistory(app.id || app._id);
       setActiveAppHistory(Array.isArray(data.data) ? data.data : []);
     } catch (err) {
@@ -209,7 +209,7 @@ export default function SMEDashboard() {
       const uploadedDoc = res.data?.data;
       const jobId = uploadedDoc?.ocr_job_id;
 
-      // Reload applications to get latest status
+      
       const appsRes = await loanApi.getAll();
       setApplications(appsRes.data.data);
 
@@ -230,14 +230,14 @@ export default function SMEDashboard() {
                 delete copy[docType];
                 return copy;
               });
-              // Reload applications to get final status transitions
+              
               const finalApps = await loanApi.getAll();
               setApplications(finalApps.data.data);
             } else if (jobStatus?.status === 'failed' || jobStatus?.vectorization_error || attempts > 60) {
               clearInterval(interval);
               setVectorizingDocs((prev) => ({
                 ...prev,
-                [docType]: `Failed: ${jobStatus?.vectorization_error || 'OCR/Vectorization failed'}`,
+                [docType]: `Failed: ${jobStatus?.error_message || jobStatus?.vectorization_error || 'OCR/Vectorization failed'}`,
               }));
             }
           } catch (pollErr) {
@@ -262,15 +262,15 @@ export default function SMEDashboard() {
     const status = activeApp.status;
     const isSubmittedCompleted = status !== 'draft';
     
-    // Eligibility Check step
+    
     const isEligActive = status === 'eligibility_check';
     const isEligCompleted = ['agent_review', 'approved', 'rejected', 'disbursed'].includes(status);
     
-    // Agent Review step
+    
     const isReviewActive = status === 'agent_review';
     const isReviewCompleted = ['approved', 'disbursed'].includes(status);
     
-    // Outcome step
+    
     const isOutcomeActive = ['approved', 'rejected', 'disbursed'].includes(status);
     
     return [
@@ -307,10 +307,10 @@ export default function SMEDashboard() {
 
 
 
-  // 3. Documents State
+  
   const [documents, setDocuments] = useState([]);
 
-  // Derive real documents from applications list
+  
   const getRealDocumentsList = () => {
     const list = [];
     applications.forEach((app) => {
@@ -351,7 +351,7 @@ export default function SMEDashboard() {
     setIsUploadingDocCenter(true);
     try {
       await loanApi.uploadDocument(targetAppId, selectedUploadDocType, file);
-      // Reload applications
+      
       const appsRes = await loanApi.getAll();
       setApplications(appsRes.data.data);
       alert(`Successfully uploaded and linked ${DOC_LABELS[selectedUploadDocType]} to application.`);
@@ -381,7 +381,7 @@ export default function SMEDashboard() {
       if (!window.confirm(`Are you sure you want to delete ${doc.name}?`)) return;
       try {
         await loanApi.deleteDocument(doc.loanId, doc.docType);
-        // Refresh application state
+        
         const appsRes = await loanApi.getAll();
         setApplications(appsRes.data.data);
         alert('Document deleted successfully.');
@@ -394,7 +394,7 @@ export default function SMEDashboard() {
     }
   };
 
-  // 4. Notifications State
+  
   const [notifications, setNotifications] = useState([]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -415,7 +415,7 @@ export default function SMEDashboard() {
   const handleSelectBank = (bank) => {
     setLinkingBank(bank);
     setIfscCode(bank.ifsc);
-    // Prefill account number with a random corporate standard number
+    
     setAccountNumber('1209' + Math.floor(10000000 + Math.random() * 90000000).toString());
     setLinkStep(2);
   };
@@ -481,7 +481,7 @@ export default function SMEDashboard() {
     navigate('/login');
   };
 
-  // ── RENDER HELPER: Badges
+  
   const getStatusBadge = (status) => {
     const configs = {
       underwriting: { variant: 'warning', label: 'Underwriting Review' },
@@ -497,10 +497,10 @@ export default function SMEDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col sm:flex-row">
-      {/* Sidebar Navigation */}
+      {}
       <aside className="w-full sm:w-64 bg-slate-900 border-r border-white/5 flex flex-col justify-between flex-shrink-0">
         <div>
-          {/* Logo */}
+          {}
           <div className="h-16 px-6 border-b border-white/5 flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center font-bold">
               <Coins className="w-5 h-5" />
@@ -511,7 +511,7 @@ export default function SMEDashboard() {
             </div>
           </div>
 
-          {/* Nav Items */}
+          {}
           <nav className="p-4 space-y-1">
             <button
               onClick={() => setActiveTab('overview')}
@@ -616,7 +616,7 @@ export default function SMEDashboard() {
           </nav>
         </div>
 
-        {/* User profile footer */}
+        {}
         <div className="p-4 border-t border-white/5 space-y-3">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-blue-600/10 border border-blue-500/20 text-blue-400 flex items-center justify-center font-semibold text-sm">
@@ -637,21 +637,21 @@ export default function SMEDashboard() {
         </div>
       </aside>
 
-      {/* Main Dashboard Panel */}
+      {}
       <main className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-6">
         
-        {/* =================================================================== */}
-        {/* VIEW: OVERVIEW */}
-        {/* =================================================================== */}
+        {}
+        {}
+        {}
         {activeTab === 'overview' && (
           <div className="space-y-6 animate-fade-in">
-            {/* Header Title */}
+            {}
             <div className="space-y-1">
               <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Overview</h1>
               <p className="text-slate-400 text-xs">Financial stats, tracker overview, and quick shortcuts.</p>
             </div>
 
-            {/* Metrics cards */}
+            {}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <Card>
                 <CardHeader className="p-4 pb-2">
@@ -690,9 +690,9 @@ export default function SMEDashboard() {
               </Card>
             </div>
 
-            {/* Middle Grid: Profile + Action Shortcuts */}
+            {}
             <div className="grid md:grid-cols-3 gap-6">
-              {/* Profile card */}
+              {}
               <Card className="md:col-span-1">
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
@@ -720,7 +720,7 @@ export default function SMEDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Quick Actions */}
+              {}
               <Card className="md:col-span-2">
                 <CardHeader>
                   <CardTitle className="text-base">Capital Actions</CardTitle>
@@ -762,7 +762,7 @@ export default function SMEDashboard() {
               </Card>
             </div>
 
-            {/* Tracker Banner */}
+            {}
             {activeApp ? (
               <Card>
                 <CardHeader className="pb-3">
@@ -797,9 +797,9 @@ export default function SMEDashboard() {
           </div>
         )}
 
-        {/* =================================================================== */}
-        {/* VIEW: SEARCH BANKS */}
-        {/* =================================================================== */}
+        {}
+        {}
+        {}
         {activeTab === 'banks' && (
           <div className="space-y-6 animate-fade-in">
             <div className="space-y-1">
@@ -807,7 +807,7 @@ export default function SMEDashboard() {
               <p className="text-slate-400 text-xs">Search and compare commercial lending partners.</p>
             </div>
 
-            {/* Search inputs */}
+            {}
             <div className="relative">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
               <input
@@ -819,7 +819,7 @@ export default function SMEDashboard() {
               />
             </div>
 
-            {/* Banks Grid/Table */}
+            {}
             <Card>
               <CardContent className="p-0">
                 <Table>
@@ -874,9 +874,9 @@ export default function SMEDashboard() {
           </div>
         )}
 
-        {/* =================================================================== */}
-        {/* VIEW: MY APPLICATIONS */}
-        {/* =================================================================== */}
+        {}
+        {}
+        {}
         {activeTab === 'applications' && (
           <div className="space-y-6 animate-fade-in">
             <div className="space-y-1">
@@ -947,9 +947,9 @@ export default function SMEDashboard() {
           </div>
         )}
 
-        {/* =================================================================== */}
-        {/* VIEW: APPLICATION TRACKER */}
-        {/* =================================================================== */}
+        {}
+        {}
+        {}
         {activeTab === 'tracker' && (
           <div className="space-y-6 animate-fade-in text-xs">
             <div className="space-y-1">
@@ -957,7 +957,7 @@ export default function SMEDashboard() {
               <p className="text-slate-400 text-xs">Dynamic stepper progress checker for your selected funding case.</p>
             </div>
 
-            {/* Stepper Selection */}
+            {}
             {nonDraftApps.length > 0 ? (
               <>
                 <div className="flex gap-2 flex-wrap">
@@ -977,7 +977,7 @@ export default function SMEDashboard() {
                   ))}
                 </div>
 
-                {/* MISSING DOCUMENTS PROMPT */}
+                {}
                 {activeApp && activeApp.status === 'missing_info' && (
                   <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-5 space-y-4">
                     <div className="flex items-start gap-3">
@@ -1071,7 +1071,7 @@ export default function SMEDashboard() {
                 )}
 
                 <div className="grid md:grid-cols-3 gap-6">
-                  {/* Stepper Steps Card */}
+                  {}
                   <Card className="md:col-span-2">
                     <CardHeader>
                       <CardTitle className="text-base flex items-center gap-2">
@@ -1084,7 +1084,7 @@ export default function SMEDashboard() {
                     </CardHeader>
                     <CardContent className="p-6 relative">
                       
-                      {/* Vertical Stepper */}
+                      {}
                       <div className="relative pl-8 space-y-8 before:absolute before:left-3.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-white/5">
                         
                         {getTimelineSteps().map((step, idx) => {
@@ -1133,7 +1133,7 @@ export default function SMEDashboard() {
                     </CardContent>
                   </Card>
 
-                  {/* Sidebar: Resolution / Log Actions */}
+                  {}
                   <Card className="md:col-span-1 h-fit text-xs">
                     <CardHeader>
                       <CardTitle className="text-sm">Assistance & Support</CardTitle>
@@ -1154,7 +1154,7 @@ export default function SMEDashboard() {
                   </Card>
                 </div>
 
-                {/* EXPANDABLE ACTIVITY HISTORY LOG */}
+                {}
                 <div className="border border-white/5 rounded-2xl overflow-hidden mt-6">
                   <div
                     onClick={() => setExpandedHistory(!expandedHistory)}
@@ -1225,9 +1225,9 @@ export default function SMEDashboard() {
           </div>
         )}
 
-        {/* =================================================================== */}
-        {/* VIEW: DOCUMENT CENTER */}
-        {/* =================================================================== */}
+        {}
+        {}
+        {}
         {activeTab === 'documents' && (
           <div className="space-y-6 animate-fade-in text-xs">
             <div className="space-y-1">
@@ -1235,7 +1235,7 @@ export default function SMEDashboard() {
               <p className="text-slate-400 text-xs">Upload and audit your corporate tax, business, and bank credentials.</p>
             </div>
 
-            {/* Drag Drop Uploader with Target App selector */}
+            {}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
@@ -1299,7 +1299,7 @@ export default function SMEDashboard() {
               </CardContent>
             </Card>
 
-            {/* Documents List */}
+            {}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Uploaded Files</CardTitle>
@@ -1364,9 +1364,9 @@ export default function SMEDashboard() {
           </div>
         )}
 
-        {/* =================================================================== */}
-        {/* VIEW: NOTIFICATIONS */}
-        {/* =================================================================== */}
+        {}
+        {}
+        {}
         {activeTab === 'notifications' && (
           <div className="space-y-6 animate-fade-in">
             <div className="flex justify-between items-end">
@@ -1385,7 +1385,7 @@ export default function SMEDashboard() {
               )}
             </div>
 
-            {/* Alert List */}
+            {}
             <div className="space-y-3">
               {notifications.length > 0 ? (
                 notifications.map((n) => (
@@ -1396,7 +1396,7 @@ export default function SMEDashboard() {
                       n.read ? 'bg-white/[0.01] border-white/5' : 'bg-blue-500/[0.02] border-blue-500/20'
                     )}
                   >
-                    {/* Unread dot */}
+                    {}
                     {!n.read && (
                       <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" />
                     )}
@@ -1448,13 +1448,13 @@ export default function SMEDashboard() {
           </div>
         )}
 
-        {/* =================================================================== */}
-        {/* VIEW: BANK ACCOUNTS */}
-        {/* =================================================================== */}
+        {}
+        {}
+        {}
         {activeTab === 'bank_accounts' && (
           <div className="space-y-6 animate-fade-in">
             {!isLinking ? (
-              // Default View: List Linked Accounts
+              
               <div className="space-y-6">
                 <div className="flex justify-between items-center">
                   <div className="space-y-1">
@@ -1541,10 +1541,10 @@ export default function SMEDashboard() {
                 )}
               </div>
             ) : (
-              // Stepper UI view
+              
               <Card className="max-w-xl mx-auto">
                 <CardHeader className="border-b border-white/5 pb-4">
-                  {/* Stepper Progress indicators */}
+                  {}
                   <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-300 mb-2">
                     <span className={linkStep >= 1 ? 'text-blue-400' : ''}>1. SELECT BANK</span>
                     <div className="h-0.5 w-6 bg-white/5" />
@@ -1565,7 +1565,7 @@ export default function SMEDashboard() {
                     </div>
                   )}
 
-                  {/* STEP 1: Search & Select Bank */}
+                  {}
                   {linkStep === 1 && (
                     <div className="space-y-4">
                       <p className="text-xs text-slate-400">Search and select your banking institution from our partner network.</p>
@@ -1616,7 +1616,7 @@ export default function SMEDashboard() {
                     </div>
                   )}
 
-                  {/* STEP 2: Enter Details */}
+                  {}
                   {linkStep === 2 && (
                     <div className="space-y-4">
                       <div className="flex items-center gap-3 border-b border-white/5 pb-3">
@@ -1629,7 +1629,7 @@ export default function SMEDashboard() {
                         </div>
                       </div>
 
-                      {/* Select Mode */}
+                      {}
                       <div className="grid grid-cols-2 gap-3">
                         <div
                           onClick={() => setLinkMode('existing')}
@@ -1646,7 +1646,7 @@ export default function SMEDashboard() {
                         <div
                           onClick={() => {
                             setLinkMode('create');
-                            // Prefill with simulated account number if empty
+                            
                             if (!accountNumber) {
                               setAccountNumber('1209' + Math.floor(10000000 + Math.random() * 90000000).toString());
                             }
@@ -1663,7 +1663,7 @@ export default function SMEDashboard() {
                         </div>
                       </div>
 
-                      {/* Account Number */}
+                      {}
                       <div className="space-y-1.5">
                         <label className="block text-xs font-medium text-slate-300">
                           {linkMode === 'create' ? 'Simulated Account Number' : 'Corporate Account Number'}
@@ -1678,7 +1678,7 @@ export default function SMEDashboard() {
                         />
                       </div>
 
-                      {/* IFSC Code */}
+                      {}
                       <div className="space-y-1.5">
                         <label className="block text-xs font-medium text-slate-300">IFSC Code</label>
                         <input
@@ -1690,7 +1690,7 @@ export default function SMEDashboard() {
                         />
                       </div>
 
-                      {/* Account Type */}
+                      {}
                       <div className="space-y-1.5">
                         <label className="block text-xs font-medium text-slate-300">Account Type</label>
                         <select
@@ -1703,7 +1703,7 @@ export default function SMEDashboard() {
                         </select>
                       </div>
 
-                      {/* Contact detail */}
+                      {}
                       <div className="space-y-1.5">
                         <label className="block text-xs font-medium text-slate-300">Registered Email or Mobile (for OTP)</label>
                         <input
@@ -1715,7 +1715,7 @@ export default function SMEDashboard() {
                         />
                       </div>
 
-                      {/* Action buttons */}
+                      {}
                       <div className="flex justify-between pt-2">
                         <button
                           onClick={() => setLinkStep(1)}
@@ -1745,7 +1745,7 @@ export default function SMEDashboard() {
                     </div>
                   )}
 
-                  {/* STEP 3: OTP Verification */}
+                  {}
                   {linkStep === 3 && (
                     <div className="space-y-5 text-center">
                       <div className="w-12 h-12 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center mx-auto">
@@ -1758,7 +1758,7 @@ export default function SMEDashboard() {
                         </p>
                       </div>
 
-                      {/* Developer Tool: preview code */}
+                      {}
                       {otpCodePreview && (
                         <div className="bg-blue-500/5 border border-blue-500/20 text-blue-400 text-xs p-3 rounded-xl max-w-sm mx-auto text-left space-y-1 font-mono">
                           <span className="font-bold text-[10px] block text-blue-300">🔧 DEV MODE AUTO-SCOUT OTP:</span>
@@ -1827,7 +1827,7 @@ export default function SMEDashboard() {
                     </div>
                   )}
 
-                  {/* STEP 4: Linked Success */}
+                  {}
                   {linkStep === 4 && (
                     <div className="text-center space-y-5 py-4">
                       <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">

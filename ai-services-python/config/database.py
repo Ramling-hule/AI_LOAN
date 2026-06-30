@@ -17,7 +17,7 @@ async def init_db() -> None:
     global _pool
 
     async def init_connection(conn):
-        # Ensure pgvector sends/receives vectors as text lists
+        
         await conn.set_type_codec(
             "vector",
             encoder=_encode_vector,
@@ -25,7 +25,7 @@ async def init_db() -> None:
             schema="public",
             format="text",
         )
-        # Register JSON/JSONB codecs
+        
         await conn.set_type_codec(
             "json",
             encoder=json.dumps,
@@ -48,10 +48,32 @@ async def init_db() -> None:
         command_timeout=60,
         init=init_connection,
     )
-    # Ensure extensions exist on startup
+    
     async with _pool.acquire() as conn:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         await conn.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS loan_processing_jobs (
+                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                loan_id VARCHAR NOT NULL,
+                priority INT DEFAULT 1,
+                status VARCHAR DEFAULT 'pending',
+                task_type VARCHAR NOT NULL,
+                payload JSONB NOT NULL,
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS query_embedding_cache (
+                key VARCHAR PRIMARY KEY,
+                query_text TEXT NOT NULL,
+                embedding vector(768) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await _ensure_rag_indexes(conn)
     logger.info(f"✅  PostgreSQL connected (asyncpg pool, min={settings.DB_POOL_MIN_SIZE}, max={settings.DB_POOL_MAX_SIZE})")
 
 
@@ -95,7 +117,71 @@ async def fetchval(sql: str, *args):
     return await pool.fetchval(sql, *args)
 
 
-# ── pgvector Type Codecs ───────────────────────────────────────────────────────
+async def executemany(sql: str, args_list: list[tuple]) -> None:
+    """Execute the same statement for many argument tuples in one round-trip."""
+    if not args_list:
+        return
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.executemany(sql, args_list)
+
+
+async def _ensure_rag_indexes(conn: asyncpg.Connection) -> None:
+    """Create btree / HNSW / GIN indexes for document_embeddings if the table exists."""
+    table_exists = await conn.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'document_embeddings'
+        )
+        """
+    )
+    if not table_exists:
+        logger.warning("document_embeddings table not found — skipping RAG index creation")
+        return
+
+    await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+
+    index_statements = [
+        """
+        CREATE INDEX IF NOT EXISTS idx_doc_emb_application_id
+            ON document_embeddings (application_id)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_doc_emb_app_doctype
+            ON document_embeddings (application_id, document_type)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_doc_emb_source_document
+            ON document_embeddings (source_document)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_doc_emb_vector_hnsw
+            ON document_embeddings
+            USING hnsw (embedding vector_cosine_ops)
+            WITH (m = 16, ef_construction = 64)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_doc_emb_chunk_text_trgm
+            ON document_embeddings USING gin (chunk_text gin_trgm_ops)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_doc_emb_structured_facts
+            ON document_embeddings USING gin ((metadata->'structured_facts'))
+        """,
+    ]
+
+    for stmt in index_statements:
+        try:
+            await conn.execute(stmt)
+        except Exception as e:
+            logger.warning(f"RAG index creation skipped ({e.__class__.__name__}): {e}")
+
+    logger.info("✅  RAG indexes ensured on document_embeddings")
+
+
+
 
 def _encode_vector(value) -> str:
     """Encode a list/ndarray to pgvector text format '[x,y,z,...]'."""

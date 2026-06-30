@@ -4,19 +4,19 @@ import { Navigate, useLocation } from 'react-router-dom';
 
 import { useAuth } from '@/context/AuthContext.jsx';
 
-// ---------------------------------------------------------------------------
-// ProtectedRoute — wraps routes that require authentication (and optionally roles)
-//
-// Usage:
-//   <ProtectedRoute>                        — any authenticated user
-//   <ProtectedRoute roles={['bank_admin']}> — specific roles only
-// ---------------------------------------------------------------------------
+
+
+
+
+
+
+
 
 export default function ProtectedRoute({ children, roles = [] }) {
   const { isAuthenticated, isInitializing, user } = useAuth();
   const location = useLocation();
 
-  // Show nothing while we're attempting silent token refresh
+  
   if (isInitializing) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">

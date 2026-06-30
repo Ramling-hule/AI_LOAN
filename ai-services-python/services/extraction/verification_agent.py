@@ -18,7 +18,7 @@ import json
 from loguru import logger
 
 from config.settings import get_settings
-from services.llm.azure_openai import chat
+from services.llm.llm_facade import chat
 from services.extraction.types import ExtractedField
 
 settings = get_settings()
@@ -67,7 +67,7 @@ async def verify(
         logger.info("[Verifier] Verification agent is disabled (ENABLE_VERIFICATION_AGENT=False)")
         return merged
 
-    # Serialize extracted fields to a compact JSON for the verifier prompt
+    
     fields_for_verification: dict = {}
     for field, ef in merged.items():
         if isinstance(ef.value, list):
@@ -81,10 +81,15 @@ async def verify(
                 "evidence": ef.evidence or "",
             }
 
-    # Build a compact evidence context (use top chunks across all domains, up to 8K chars)
+    
     context_parts = []
     char_budget = 8000
-    for chunk in all_chunks:
+    ranked_chunks = sorted(
+        all_chunks,
+        key=lambda c: (c.get("rerank_score", 0.0), c.get("score", 0.0)),
+        reverse=True,
+    )
+    for chunk in ranked_chunks:
         text = chunk.get("text", "")
         if not text:
             continue
@@ -113,10 +118,11 @@ async def verify(
     try:
         raw_response = await chat(
             messages,
-            temperature=0.0,   # deterministic for verification
+            temperature=0.0,   
             max_tokens=3000,
             response_format="json_object",
-            model=settings.GEMINI_MODEL,  # use Pro for verifier
+            model=settings.GEMINI_MODEL,  
+            is_background=True,
         )
         verified_raw = json.loads(raw_response)
     except json.JSONDecodeError as e:
@@ -126,7 +132,7 @@ async def verify(
         logger.error(f"[Verifier] LLM call failed: {e} — skipping verification")
         return merged
 
-    # Apply verification results
+    
     result: dict[str, ExtractedField] = {}
     nullified: list[str] = []
 
@@ -134,13 +140,13 @@ async def verify(
         verified_entry = verified_raw.get(field)
 
         if not isinstance(verified_entry, dict):
-            # Verifier returned unexpected shape — keep original
+            
             result[field] = original_ef
             continue
 
         verified_value = verified_entry.get("value")
         if verified_value is None and original_ef.value is not None:
-            # Verifier rejected this field
+            
             nullified.append(field)
             result[field] = ExtractedField(
                 value=None,
@@ -153,7 +159,7 @@ async def verify(
                 rerank_score=original_ef.rerank_score,
             )
         else:
-            # Verifier accepted — mark source as verified, bump confidence slightly
+            
             result[field] = ExtractedField(
                 value=verified_value if verified_value is not None else original_ef.value,
                 confidence=min(1.0, original_ef.confidence * 1.05) if verified_value is not None else 0.0,

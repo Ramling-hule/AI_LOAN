@@ -15,13 +15,13 @@ import json
 from loguru import logger
 
 from config.settings import get_settings
-from services.llm.azure_openai import embed_batch
+from services.llm.llm_facade import embed_batch
 from services.vectordb.pgvector_service import query_similar_chunks
 from services.extraction.orchestrator import run_pipeline
 
 settings = get_settings()
 
-# ── Legacy query list preserved for underwriting_service.py compatibility ─────
+
 EXTRACTION_QUERIES = [
     "GSTIN GST identification number PAN permanent account number CIN company registration",
     "annual turnover revenue net profit loss financial statements",

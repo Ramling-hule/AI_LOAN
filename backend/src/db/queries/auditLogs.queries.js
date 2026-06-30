@@ -1,10 +1,10 @@
 import supabase from '../supabaseClient.js';
 import { v4 as uuidv4 } from 'uuid';
 
-// ---------------------------------------------------------------------------
-// auditLogs.queries.js
-// Supabase operations for the audit_logs table.
-// ---------------------------------------------------------------------------
+
+
+
+
 
 export const recordAuditLog = async ({
   actor_id = 'system',
@@ -46,7 +46,7 @@ export const recordAuditLog = async ({
     if (error) throw error;
     return data;
   } catch (err) {
-    // Audit log failures must NEVER crash the main request flow
+    
     console.error('[AuditLog] Failed to record audit log:', err.message);
     return null;
   }

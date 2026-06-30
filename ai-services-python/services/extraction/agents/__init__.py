@@ -9,21 +9,41 @@ from typing import Any, Optional
 from loguru import logger
 
 from config.settings import get_settings
-from services.llm.azure_openai import chat
+from services.llm.llm_facade import chat
 from services.extraction.types import ExtractedField
 
 settings = get_settings()
 
 
-def _format_chunks_as_context(chunks: list[dict]) -> str:
+def _format_chunks_as_context(
+    chunks: list[dict],
+    max_chars: int | None = None,
+) -> str:
     """
     Format re-ranked chunks into a structured context string, grouped by document type.
+    Chunks are included in rerank-score order until max_chars is reached.
     """
-    # Group by document type
+    max_chars = max_chars or settings.EXTRACTION_CONTEXT_MAX_CHARS
+
+    ranked = sorted(
+        chunks,
+        key=lambda c: (c.get("rerank_score", 0.0), c.get("score", 0.0)),
+        reverse=True,
+    )
+
     by_doc: dict[str, list[dict]] = {}
-    for chunk in chunks:
+    used_chars = 0
+    for chunk in ranked:
+        text = chunk.get("text", "")
+        if not text:
+            continue
+        page_info = f" [Page {chunk['page_number']}]" if chunk.get("page_number") else ""
+        entry_len = len(text) + len(page_info) + 32
+        if used_chars + entry_len > max_chars:
+            break
         doc_type = chunk.get("document_type") or "General"
         by_doc.setdefault(doc_type, []).append(chunk)
+        used_chars += entry_len
 
     sections = []
     for doc_type, doc_chunks in by_doc.items():
@@ -54,7 +74,7 @@ def _parse_llm_field(
         return ExtractedField(value=None, confidence=0.0, source="llm")
 
     if not isinstance(raw, dict):
-        # LLM returned a plain scalar — wrap it
+        
         return ExtractedField(value=raw, confidence=0.5, source="llm")
 
     value = raw.get("value")
@@ -63,7 +83,7 @@ def _parse_llm_field(
     doc_type = raw.get("document_type")
     evidence = raw.get("evidence")
 
-    # Find the best matching chunk scores for this value
+    
     best_retrieval = 0.0
     best_rerank = 0.0
     if chunk_pool and evidence:
@@ -110,6 +130,7 @@ async def call_agent(
             max_tokens=2048,
             response_format="json_object",
             model=settings.GEMINI_FLASH_MODEL,
+            is_background=True
         )
         raw = json.loads(raw_response)
     except json.JSONDecodeError as e:

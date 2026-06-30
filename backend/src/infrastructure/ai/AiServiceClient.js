@@ -28,6 +28,14 @@ class AiServiceClient {
   async assessUnderwriting(payload) {
     return this.client.post('/api/v1/underwriting/assess', payload);
   }
+
+  async preemptQueue(loanId, payload) {
+    return this.client.post(`/api/v1/queue/preempt/${loanId}`, payload);
+  }
+
+  async getQueueJobStatus(jobId) {
+    return this.client.get(`/api/v1/queue/status/${jobId}`);
+  }
 }
 
-export default new AiServiceClient(); // Export singleton
+export default new AiServiceClient(); 

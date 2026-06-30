@@ -10,13 +10,13 @@ import extractionRoutes from './v1/extraction.routes.js';
 import underwritingRoutes from './v1/underwriting.routes.js';
 import auditLogRoutes from './v1/auditLog.routes.js';
 
-// ---------------------------------------------------------------------------
-// Route aggregator — import and mount all versioned route groups here.
-// ---------------------------------------------------------------------------
+
+
+
 
 const router = express.Router();
 
-// Health check (no auth required)
+
 router.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
@@ -26,7 +26,7 @@ router.get('/health', (_req, res) => {
   });
 });
 
-// ── V1 Routes ────────────────────────────────────────────────────────────────
+
 router.use('/v1/auth', authRoutes);
 router.use('/v1/loans', loanRoutes);
 router.use('/v1/users', userRoutes);

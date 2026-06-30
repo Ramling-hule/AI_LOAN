@@ -12,20 +12,18 @@ import {
 import { setRefreshTokenCookie, clearRefreshTokenCookie } from '../utils/token.utils.js';
 import { recordAuditLog } from '../db/queries/auditLogs.queries.js';
 
-// ---------------------------------------------------------------------------
-// Auth Controller
-// Thin layer: validate input → delegate to service → set cookies → respond
-// ---------------------------------------------------------------------------
 
-// ── SME ──────────────────────────────────────────────────────────────────────
 
-/**
- * POST /api/v1/auth/sme/register
- */
+
+
+
+
+
+
 export const smeRegister = asyncHandler(async (req, res) => {
   const result = await registerSME(req.body, req.ip, req.headers['user-agent']);
 
-  // Log registration audit log
+  
   recordAuditLog({
     actor_id: result.user.id,
     actor_ref_model: 'SMEUser',
@@ -47,9 +45,7 @@ export const smeRegister = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
-/**
- * POST /api/v1/auth/sme/login
- */
+
 export const smeLogin = asyncHandler(async (req, res) => {
   const result = await loginSME(req.body);
   return ApiResponse.ok(
@@ -58,11 +54,9 @@ export const smeLogin = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
-// ── Bank Admin ────────────────────────────────────────────────────────────────
 
-/**
- * POST /api/v1/auth/bank/register
- */
+
+
 export const bankAdminRegister = asyncHandler(async (req, res) => {
   const result = await registerBankAdmin(req.body);
 
@@ -87,9 +81,7 @@ export const bankAdminRegister = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
-/**
- * POST /api/v1/auth/bank/login
- */
+
 export const bankAdminLogin = asyncHandler(async (req, res) => {
   const result = await loginBankAdmin(req.body);
   return ApiResponse.ok(
@@ -98,17 +90,15 @@ export const bankAdminLogin = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
-// ── MFA Verification ─────────────────────────────────────────────────────────
 
-/**
- * POST /api/v1/auth/mfa/verify
- */
+
+
 export const verifyMfa = asyncHandler(async (req, res) => {
   const { tempToken, code } = req.body;
 
   const result = await verifyMfaOTP(tempToken, code, req.ip, req.headers['user-agent']);
 
-  // Rotate and set the long-lived refresh token in HTTP-Only cookie
+  
   setRefreshTokenCookie(res, result.refreshToken);
 
   recordAuditLog({
@@ -130,17 +120,15 @@ export const verifyMfa = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
-// ── Shared ────────────────────────────────────────────────────────────────────
 
-/**
- * POST /api/v1/auth/refresh
- */
+
+
 export const refresh = asyncHandler(async (req, res) => {
   const token = req.cookies?.refreshToken || req.body?.refreshToken;
 
   const result = await refreshAccessToken(token, req.ip, req.headers['user-agent']);
 
-  // Rotate refresh token
+  
   setRefreshTokenCookie(res, result.refreshToken);
 
   return ApiResponse.ok(
@@ -149,9 +137,7 @@ export const refresh = asyncHandler(async (req, res) => {
   ).send(res);
 });
 
-/**
- * POST /api/v1/auth/logout
- */
+
 export const logout = asyncHandler(async (req, res) => {
   await authServiceLogout(req.user);
 
@@ -175,9 +161,7 @@ export const logout = asyncHandler(async (req, res) => {
   return ApiResponse.ok(null, 'Logged out successfully').send(res);
 });
 
-/**
- * GET /api/v1/auth/me
- */
+
 export const getMe = asyncHandler(async (req, res) => {
   return ApiResponse.ok(req.user, 'Current user').send(res);
 });

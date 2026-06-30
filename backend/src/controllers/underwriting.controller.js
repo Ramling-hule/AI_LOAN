@@ -5,10 +5,7 @@ import UnderwritingService from '../services/underwriting.service.js';
 import ExtractionService from '../services/extraction.service.js';
 import OcrService from '../services/ocr.service.js';
 
-/**
- * POST /api/v1/underwriting/loans/:loanId/assess
- * Trigger credit risk and policy checks using LLM and pgvector context.
- */
+
 const triggerAssessment = asyncHandler(async (req, res) => {
   const { loanId } = req.params;
 
@@ -23,23 +20,17 @@ const triggerAssessment = asyncHandler(async (req, res) => {
   });
 });
 
-/**
- * POST /api/v1/underwriting/loans/:loanId/reevaluate
- * Force parameter re-extraction and then re-assess underwriting.
- */
+
 const reevaluateLoan = asyncHandler(async (req, res) => {
   const { loanId } = req.params;
 
   logger.info(`[Underwriting Controller] Re-evaluating loan ${loanId} from extraction to underwriting assessment`);
 
-  // 1. Reprocess all documents (OCR & Vectorization)
-  await OcrService.reprocessLoanDocuments(loanId, req.user);
+  
+  
 
-  // 2. Force re-run extraction (bypasses cache)
-  await ExtractionService.triggerExtraction(loanId, req.user, true);
-
-  // 3. Re-run underwriting assessment
-  const assessment = await UnderwritingService.triggerAssessment(loanId, req.user);
+  
+  const assessment = await UnderwritingService.triggerAssessment(loanId, req.user, { force: true });
 
   res.status(200).json({
     success: true,
@@ -48,10 +39,7 @@ const reevaluateLoan = asyncHandler(async (req, res) => {
   });
 });
 
-/**
- * GET /api/v1/underwriting/loans/:loanId/report
- * Fetch stored underwriting assessment report.
- */
+
 const getAssessmentReport = asyncHandler(async (req, res) => {
   const { loanId } = req.params;
 
@@ -67,10 +55,7 @@ const getAssessmentReport = asyncHandler(async (req, res) => {
   });
 });
 
-/**
- * POST /api/v1/underwriting/loans/:loanId/notify-policy-issue
- * Notify SME applicant about a policy issue and transition status to missing_info.
- */
+
 const notifyPolicyIssue = asyncHandler(async (req, res) => {
   const { loanId } = req.params;
   const { policyTitle, details } = req.body;
@@ -95,9 +80,22 @@ const notifyPolicyIssue = asyncHandler(async (req, res) => {
   });
 });
 
+
+const getQueueJobStatus = asyncHandler(async (req, res) => {
+  const { jobId } = req.params;
+  const status = await UnderwritingService.getQueueJobStatus(jobId);
+  if (!status) throw ApiError.notFound('Job not found');
+
+  res.json({
+    success: true,
+    data: status,
+  });
+});
+
 export default {
   triggerAssessment,
   getAssessmentReport,
   reevaluateLoan,
   notifyPolicyIssue,
+  getQueueJobStatus
 };

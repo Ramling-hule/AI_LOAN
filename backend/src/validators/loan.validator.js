@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-// ---------------------------------------------------------------------------
-// Loan Validators — Zod schemas for loan request bodies.
-// ---------------------------------------------------------------------------
+
+
+
 
 export const createLoanSchema = z.object({
   applicantId: z.string().min(1, 'Applicant ID is required'),

@@ -1,10 +1,10 @@
 import supabase from '../supabaseClient.js';
 import { v4 as uuidv4 } from 'uuid';
 
-// ---------------------------------------------------------------------------
-// policies.queries.js
-// Supabase operations for the bank_policy_documents table.
-// ---------------------------------------------------------------------------
+
+
+
+
 
 export const findPoliciesForBank = async (bankName) => {
   const { data, error } = await supabase
@@ -34,9 +34,9 @@ export const findAllPolicies = async ({ bankName, page = 1, limit = 20 }) => {
   const { data, count, error } = await query;
   if (error) throw error;
   
-  // To match previous return style (raw rows), we just return data,
-  // but if pagination metadata was expected, we'd wrap it. 
-  // Based on old code, it just returned rows.
+  
+  
+  
   return data || [];
 };
 
@@ -93,7 +93,7 @@ export const updatePolicy = async (
   id,
   updates
 ) => {
-  const allowed = ['title', 'content', 'description', 'filename', 'url', 'public_id', 'size', 'mimetype', 'is_system_default', 'is_active'];
+  const allowed = ['title', 'content', 'description', 'filename', 'url', 'public_id', 'size', 'mimetype', 'is_system_default', 'is_active', 'query_embedding'];
   const updatePayload = {};
   
   for (const field of allowed) {

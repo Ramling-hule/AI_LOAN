@@ -17,51 +17,51 @@ from typing import Optional
 
 from loguru import logger
 
-# ── Patterns ──────────────────────────────────────────────────────────────────
 
-# GSTIN: 15 chars — state code (2 digits) + PAN (10) + entity number + Z + checksum
+
+
 _GSTIN_RE = re.compile(
     r"\b(\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b"
 )
 
-# PAN: 10 chars — AAAAA9999A format
-# Negative lookahead avoids matching PAN embedded inside a GSTIN
+
+
 _PAN_RE = re.compile(
     r"(?<!\d)([A-Z]{5}\d{4}[A-Z])(?!\d)"
 )
 
-# CIN: Company Identification Number  L/U + 5 digits + state (2 letters) +
-#       year (4 digits) + company type (3 letters) + sequence (6 digits)
+
+
 _CIN_RE = re.compile(
     r"\b([LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6})\b"
 )
 
-# LLPIN: LLP Identification Number  AAA-0000
+
 _LLPIN_RE = re.compile(
     r"\b([A-Z]{3}-\d{4})\b"
 )
 
-# GSTIN validator (full format check)
+
 _GSTIN_VALID_RE = re.compile(
     r"^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$"
 )
 
-# PAN validator
+
 _PAN_VALID_RE = re.compile(r"^[A-Z]{5}\d{4}[A-Z]$")
 
 
-# ── Result type ───────────────────────────────────────────────────────────────
+
 
 @dataclass
 class RegexMatch:
     """Result of a single regex extraction attempt."""
     value: str
-    confidence: float    # 0.99 if pattern + validation pass, 0.80 if pattern only
+    confidence: float    
     pattern_name: str
-    raw_match: str       # the exact string matched
+    raw_match: str       
 
 
-# ── Extractor ─────────────────────────────────────────────────────────────────
+
 
 def extract_identity_fields(text: str) -> dict[str, Optional[RegexMatch]]:
     """
@@ -80,10 +80,10 @@ def extract_identity_fields(text: str) -> dict[str, Optional[RegexMatch]]:
         "llpin": None,
     }
 
-    # ── GSTIN ──────────────────────────────────────────────────────────────
+    
     gstin_matches = _GSTIN_RE.findall(text)
     if gstin_matches:
-        # Prefer matches that pass full validation
+        
         valid = [m for m in gstin_matches if _GSTIN_VALID_RE.match(m)]
         chosen = valid[0] if valid else gstin_matches[0]
         conf = 0.99 if valid else 0.80
@@ -95,10 +95,10 @@ def extract_identity_fields(text: str) -> dict[str, Optional[RegexMatch]]:
         )
         logger.debug(f"[RegexExtractor] GSTIN found: {chosen} (conf={conf})")
 
-    # ── PAN ────────────────────────────────────────────────────────────────
+    
     pan_matches = _PAN_RE.findall(text)
     if pan_matches:
-        # Filter out PANs that are substrings of a GSTIN we already found
+        
         gstin_val = results["gstin"].value if results["gstin"] else ""
         filtered = [m for m in pan_matches if m not in gstin_val]
         if filtered:
@@ -113,7 +113,7 @@ def extract_identity_fields(text: str) -> dict[str, Optional[RegexMatch]]:
             )
             logger.debug(f"[RegexExtractor] PAN found: {chosen} (conf={conf})")
 
-    # ── CIN ────────────────────────────────────────────────────────────────
+    
     cin_matches = _CIN_RE.findall(text)
     if cin_matches:
         chosen = cin_matches[0]
@@ -125,7 +125,7 @@ def extract_identity_fields(text: str) -> dict[str, Optional[RegexMatch]]:
         )
         logger.debug(f"[RegexExtractor] CIN found: {chosen}")
 
-    # ── LLPIN ──────────────────────────────────────────────────────────────
+    
     llpin_matches = _LLPIN_RE.findall(text)
     if llpin_matches:
         chosen = llpin_matches[0]

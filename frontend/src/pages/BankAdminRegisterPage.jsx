@@ -18,9 +18,9 @@ import {
 
 import { useAuth } from '@/context/AuthContext.jsx';
 
-// ---------------------------------------------------------------------------
-// Bank Admin Register Page
-// ---------------------------------------------------------------------------
+
+
+
 
 const PasswordStrength = ({ password = '' }) => {
   const checks = [
@@ -91,7 +91,7 @@ export default function BankAdminRegisterPage() {
 
       <div className="relative w-full max-w-lg">
         <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-          {/* Header */}
+          {}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 mb-4">
               <Landmark className="w-7 h-7 text-emerald-400" />
@@ -100,7 +100,7 @@ export default function BankAdminRegisterPage() {
             <p className="text-slate-400 text-sm">Register as an underwriter partner branch</p>
           </div>
 
-          {/* Server error */}
+          {}
           {serverError && (
             <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6">
               <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
@@ -109,7 +109,7 @@ export default function BankAdminRegisterPage() {
           )}
 
           <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
-            {/* Admin Name & Phone */}
+            {}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label htmlFor="reg-admin-name" className="block text-sm font-medium text-slate-300">
@@ -149,7 +149,7 @@ export default function BankAdminRegisterPage() {
               </div>
             </div>
 
-            {/* Email Address */}
+            {}
             <div className="space-y-1.5">
               <label htmlFor="reg-email" className="block text-sm font-medium text-slate-300">
                 Work Email Address
@@ -170,7 +170,7 @@ export default function BankAdminRegisterPage() {
               {errors.email && <p className="text-red-400 text-xs">{errors.email.message}</p>}
             </div>
 
-            {/* Bank Name & Branch Name */}
+            {}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label htmlFor="reg-bank-name" className="block text-sm font-medium text-slate-300">
@@ -207,7 +207,7 @@ export default function BankAdminRegisterPage() {
               </div>
             </div>
 
-            {/* IFSC Code & Branch City */}
+            {}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label htmlFor="reg-ifsc" className="block text-sm font-medium text-slate-300">
@@ -241,7 +241,7 @@ export default function BankAdminRegisterPage() {
               </div>
             </div>
 
-            {/* Password */}
+            {}
             <div className="space-y-1.5">
               <label htmlFor="reg-password" className="block text-sm font-medium text-slate-300">
                 Password
@@ -276,7 +276,7 @@ export default function BankAdminRegisterPage() {
               <PasswordStrength password={password} />
             </div>
 
-            {/* Submit */}
+            {}
             <button
               id="bank-register-btn"
               type="submit"

@@ -33,9 +33,9 @@ Context:
 Question: {body.query}
 """
         
-        response_text = await llm.generate(prompt)
+        messages = [{"role": "user", "content": prompt}]
+        response_text = await llm.chat(messages, response_format="text")        
         
-        # Deduplicate source names
         sources = list(set([c['document_name'] for c in chunks if c['document_name']]))
         
         return {"success": True, "answer": response_text, "sources": sources}

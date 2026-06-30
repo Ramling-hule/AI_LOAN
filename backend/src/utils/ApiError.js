@@ -1,15 +1,10 @@
-// ---------------------------------------------------------------------------
-// Custom ApiError class for operational errors.
-// Non-operational errors (programmer errors) should bubble up as-is.
-// ---------------------------------------------------------------------------
+
+
+
+
 
 export class ApiError extends Error {
-  /**
-   * @param {number} statusCode - HTTP status code
-   * @param {string} message    - Human-readable error message
-   * @param {Array}  errors     - Validation error details
-   * @param {string} stack      - Optional stack override
-   */
+  
   constructor(statusCode, message = 'Something went wrong', errors = [], stack = '') {
     super(message);
 
@@ -17,7 +12,7 @@ export class ApiError extends Error {
     this.message = message;
     this.success = false;
     this.errors = errors;
-    this.isOperational = true; // distinguish from unexpected errors
+    this.isOperational = true; 
 
     if (stack) {
       this.stack = stack;
@@ -26,9 +21,9 @@ export class ApiError extends Error {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Factory helpers
-  // ---------------------------------------------------------------------------
+  
+  
+  
 
   static badRequest(message = 'Bad Request', errors = []) {
     return new ApiError(400, message, errors);

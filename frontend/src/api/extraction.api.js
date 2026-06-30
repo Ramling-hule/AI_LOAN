@@ -1,8 +1,8 @@
 import apiClient from './apiClient';
 
-// ---------------------------------------------------------------------------
-// Extraction API — wrapper for parameter extraction and validations
-// ---------------------------------------------------------------------------
+
+
+
 
 export const extractionApi = {
   triggerExtraction: (loanId) => apiClient.post(`/extraction/loans/${loanId}/extract`),

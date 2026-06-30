@@ -21,12 +21,15 @@ from functools import lru_cache
 from typing import Optional
 
 from loguru import logger
+import threading
 
 from config.settings import get_settings
 
 settings = get_settings()
 
-# ── Lazy model loader ─────────────────────────────────────────────────────────
+
+
+_model_lock = threading.Lock()
 
 @lru_cache(maxsize=1)
 def _load_cross_encoder():
@@ -34,26 +37,27 @@ def _load_cross_encoder():
     Load the CrossEncoder model once, cache it for the process lifetime.
     Returns None if sentence-transformers is not installed.
     """
-    try:
-        from sentence_transformers import CrossEncoder  # type: ignore
-        model_name = settings.RERANKER_MODEL
-        logger.info(f"[Reranker] Loading CrossEncoder: {model_name}")
-        model = CrossEncoder(model_name, max_length=512)
-        logger.info(f"[Reranker] CrossEncoder ready: {model_name}")
-        return model
-    except ImportError:
-        logger.warning(
-            "[Reranker] sentence-transformers not installed — "
-            "falling back to cosine-score ordering. "
-            "Run: pip install sentence-transformers"
-        )
-        return None
-    except Exception as e:
-        logger.error(f"[Reranker] Failed to load CrossEncoder: {e} — using cosine fallback")
-        return None
+    with _model_lock:
+        try:
+            from sentence_transformers import CrossEncoder  
+            model_name = settings.RERANKER_MODEL
+            logger.info(f"[Reranker] Loading CrossEncoder: {model_name}")
+            model = CrossEncoder(model_name, max_length=512)
+            logger.info(f"[Reranker] CrossEncoder ready: {model_name}")
+            return model
+        except ImportError:
+            logger.warning(
+                "[Reranker] sentence-transformers not installed — "
+                "falling back to cosine-score ordering. "
+                "Run: pip install sentence-transformers"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"[Reranker] Failed to load CrossEncoder: {e} — using cosine fallback")
+            return None
 
 
-# ── Core rerank function ──────────────────────────────────────────────────────
+
 
 def _rerank_sync(
     query: str,
@@ -67,12 +71,12 @@ def _rerank_sync(
     model = _load_cross_encoder()
 
     if model is None or not settings.RERANKER_ENABLED:
-        # Graceful fallback: cosine score ordering (already sorted)
+        
         for chunk in chunks:
             chunk["rerank_score"] = chunk.get("score", 0.0)
         return chunks[:top_k]
 
-    # Build (query, passage) pairs for the cross-encoder
+    
     pairs = [(query, c.get("text", "")) for c in chunks]
 
     try:
@@ -83,7 +87,7 @@ def _rerank_sync(
             chunk["rerank_score"] = chunk.get("score", 0.0)
         return chunks[:top_k]
 
-    # Attach re-rank score and sort descending
+    
     for chunk, score in zip(chunks, scores):
         chunk["rerank_score"] = float(score)
 
@@ -114,10 +118,10 @@ async def rerank(
 
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
-        None,  # default thread pool
+        None,  
         _rerank_sync,
         query,
-        list(chunks),  # copy to avoid mutation issues across threads
+        list(chunks),  
         top_k,
     )
     return result
@@ -142,7 +146,7 @@ async def rerank_all_domains(
 
     top_k = top_k or settings.EXTRACTION_TOP_K_FINAL
 
-    # Use the first query of each domain as the ranking signal
+    
     domain_representative_queries = {
         domain: queries[0]
         for domain, queries in DOMAIN_QUERIES.items()
@@ -163,13 +167,13 @@ async def rerank_all_domains(
     for domain, result in zip(tasks.keys(), results):
         if isinstance(result, Exception):
             logger.error(f"[Reranker] Re-ranking failed for domain={domain}: {result}")
-            # Fallback: use original cosine-sorted list
+            
             reranked[domain] = domain_chunks.get(domain, [])[:top_k]
         else:
             reranked[domain] = result
             if result:
                 logger.info(
-                    f"[Reranker] domain={domain:12s} → {len(result):2d} chunks "
+                    f"[Reranker] domain={domain:12s} -> {len(result):2d} chunks "
                     f"(rerank: {result[0]['rerank_score']:.3f}–{result[-1]['rerank_score']:.3f})"
                 )
 

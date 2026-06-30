@@ -21,19 +21,19 @@ import httpx
 from config.settings import get_settings
 from config.database import execute, fetchrow
 from services.ocr.document_loader import process_document, DocumentResult
-from services.llm.azure_openai import embed_batch
+from services.llm.llm_facade import embed_batch
 from services.vectordb.pgvector_service import upsert_document_chunks
+from services.rag.chunking.service import build_document_chunks
 
 settings = get_settings()
 
 _queue: asyncio.Queue = asyncio.Queue(maxsize=settings.OCR_MAX_QUEUE_SIZE)
 _worker_task: Optional[asyncio.Task] = None
 
-# ── In-memory job tracking (mirrors the PostgreSQL ocr_jobs state) ─────────────
+
 _active_jobs: dict[str, dict] = {}
 
-CHUNK_SIZE = 600      # characters per chunk
-CHUNK_OVERLAP = 100   # overlap for context continuity
+
 
 
 @dataclass
@@ -47,7 +47,7 @@ class OcrQueueItem:
     document_url: str = ""
 
 
-# ── Queue API ─────────────────────────────────────────────────────────────────
+
 
 async def submit_job(item: OcrQueueItem) -> bool:
     """Add an OCR job to the processing queue."""
@@ -66,7 +66,7 @@ def get_job_state(job_id: str) -> dict | None:
     return _active_jobs.get(job_id)
 
 
-# ── Worker ────────────────────────────────────────────────────────────────────
+
 
 async def start_worker():
     """Start the background OCR queue worker. Called on app startup."""
@@ -108,7 +108,7 @@ async def _process_job(item: OcrQueueItem):
 
     _active_jobs[job_id] = {"status": "processing", "started_at": time.time()}
 
-    # Update PostgreSQL job status to 'processing'
+    
     await execute(
         "UPDATE ocr_jobs SET status = 'processing', started_at = NOW() WHERE id = $1",
         job_id
@@ -118,7 +118,7 @@ async def _process_job(item: OcrQueueItem):
     doc_result: DocumentResult | None = None
 
     try:
-        # Step 1: OCR / Document extraction
+        
         doc_result = await process_document(item.file_bytes, item.filename, item.mime_type)
 
         if not doc_result.raw_text.strip():
@@ -126,7 +126,7 @@ async def _process_job(item: OcrQueueItem):
 
         processing_ms = int((time.time() - start) * 1000)
 
-        # Step 2: Persist OCR result to PostgreSQL
+        
         ocr_result_json = {
             "raw_text": doc_result.raw_text,
             "tables": doc_result.tables,
@@ -164,35 +164,53 @@ async def _process_job(item: OcrQueueItem):
 
         logger.info(f"[OCR Queue] Job {job_id} OCR complete in {processing_ms}ms. Running vectorization...")
 
-        # Step 3: Chunk, embed, and store in pgvector
-        chunks = _chunk_text(
-            text=doc_result.raw_text,
-            job_id=job_id,
-            application_id=item.application_id,
-            document_type=item.document_type,
-            document_name=item.filename,
-        )
-
-        if chunks:
-            chunk_texts = [c["chunk_text"] for c in chunks]
-            embeddings = await embed_batch(chunk_texts)
-
-            for chunk, embedding in zip(chunks, embeddings):
-                chunk["embedding"] = embedding
-
-            chunk_count = await upsert_document_chunks(chunks)
+        
+        job_record = await fetchrow("SELECT is_vectorized, vector_chunk_count FROM ocr_jobs WHERE id = $1", job_id)
+        is_vectorized = job_record["is_vectorized"] if job_record else False
+        
+        if is_vectorized:
+            logger.info(f"[OCR Queue] Job {job_id} already vectorized. Skipping new embeddings as requested.")
+            chunk_count = job_record.get("vector_chunk_count", 0)
         else:
-            chunk_count = 0
-            logger.warning(f"[OCR Queue] Job {job_id} produced no chunks to vectorize.")
+            chunks = build_document_chunks(
+                document=doc_result,
+                job_id=job_id,
+                application_id=item.application_id,
+                document_type=item.document_type,
+                document_name=item.filename,
+                mime_type=item.mime_type,
+            )
 
-        # Step 4: Mark as vectorized in PostgreSQL
+            if chunks:
+                chunk_texts = [c["chunk_text"] for c in chunks]
+                embeddings = []
+                batch_size = 20
+                for i in range(0, len(chunk_texts), batch_size):
+                    batch = chunk_texts[i:i+batch_size]
+                    logger.info(f"[OCR Queue] Embedding batch {i//batch_size + 1}/{(len(chunk_texts)-1)//batch_size + 1}")
+                    batch_embs = await embed_batch(batch, use_last_key=False)
+                    embeddings.extend(batch_embs)
+                    if i + batch_size < len(chunk_texts):
+                        logger.info(f"[OCR Queue] Waiting 60s before next embedding batch...")
+                        await asyncio.sleep(60)
+
+                for chunk, embedding in zip(chunks, embeddings):
+                    chunk["embedding"] = embedding
+
+                chunk_count = await upsert_document_chunks(chunks)
+            else:
+                chunk_count = 0
+                logger.warning(f"[OCR Queue] Job {job_id} produced no chunks to vectorize.")
+
+        
         await execute(
             """
             UPDATE ocr_jobs SET
                 is_vectorized = TRUE,
                 vectorized_at = NOW(),
                 vector_chunk_count = $2,
-                vectorization_error = NULL
+                vectorization_error = NULL,
+                ocr_result = NULL
             WHERE id = $1
             """,
             job_id, chunk_count,
@@ -204,7 +222,7 @@ async def _process_job(item: OcrQueueItem):
             "confidence": doc_result.confidence_score,
         }
 
-        # Step 5: Callback to backend
+        
         await _notify_backend_vectorized(job_id, chunk_count, success=True)
 
         logger.info(f"[OCR Queue] Job {job_id} complete: {chunk_count} chunks vectorized.")
@@ -228,39 +246,7 @@ async def _process_job(item: OcrQueueItem):
         await _notify_backend_vectorized(job_id, 0, success=False, error=str(e))
 
 
-def _chunk_text(text: str, job_id: str, application_id: str, document_type: str, document_name: str) -> list[dict]:
-    """
-    Split document text into overlapping chunks for embedding.
-    Replaces the Node.js chunking logic in the vectorization pipeline.
-    """
-    chunks = []
-    idx = 0
-    chunk_index = 0
 
-    while idx < len(text):
-        end = min(idx + CHUNK_SIZE, len(text))
-        chunk_text = text[idx:end].strip()
-
-        if len(chunk_text) >= 30:  # skip tiny fragments
-            chunks.append({
-                "application_id": application_id,
-                "source_document": job_id,
-                "document_type": document_type,
-                "document_name": document_name,
-                "chunk_index": chunk_index,
-                "page_number": None,  # page-level attribution handled separately
-                "chunk_text": chunk_text,
-                "metadata": {
-                    "job_id": job_id,
-                    "chunk_index": chunk_index,
-                    "document_type": document_type,
-                },
-            })
-            chunk_index += 1
-
-        idx += CHUNK_SIZE - CHUNK_OVERLAP
-
-    return chunks
 
 
 async def _notify_backend_vectorized(job_id: str, chunk_count: int, success: bool, error: str = ""):

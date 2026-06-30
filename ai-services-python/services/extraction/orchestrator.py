@@ -23,23 +23,17 @@ from loguru import logger
 from config.settings import get_settings
 from services.extraction.types import ExtractedField, ALL_FIELDS, REQUIRED_FIELDS
 from services.extraction.retriever import retrieve_all_domains, retrieve_targeted
-from services.extraction.reranker import rerank_all_domains
+from services.extraction.reranker import rerank_all_domains, rerank
 from services.extraction.normalizer import normalize_chunks
 from services.extraction.regex_extractor import extract_from_chunks
 from services.extraction.confidence import compute_confidence, get_doc_priority
-from services.extraction import agents  # noqa — ensures subpackage loads
-from services.extraction.agents import identity_extractor
-from services.extraction.agents import financial_extractor
-from services.extraction.agents import bank_extractor
-from services.extraction.agents import loan_extractor
-from services.extraction.agents import promoter_extractor
-from services.extraction.agents import collateral_extractor
+from services.extraction.agents.master_extractor import master_extractor
 from services.extraction import verification_agent
 
 settings = get_settings()
 
 
-# ── Merge helpers ─────────────────────────────────────────────────────────────
+
 
 def _merge_agent_results(
     *agent_dicts: dict[str, ExtractedField],
@@ -70,7 +64,7 @@ def _flat_chunks(domain_chunks: dict[str, list[dict]]) -> list[dict]:
     return result
 
 
-# ── Confidence finalisation ───────────────────────────────────────────────────
+
 
 def _finalise_confidence(
     merged: dict[str, ExtractedField],
@@ -96,7 +90,7 @@ def _finalise_confidence(
     return merged
 
 
-# ── Main pipeline entry ───────────────────────────────────────────────────────
+
 
 async def run_pipeline(application_id: str) -> dict:
     """
@@ -115,7 +109,7 @@ async def run_pipeline(application_id: str) -> dict:
     """
     logger.info(f"[Orchestrator] ═══ Starting pipeline for app={application_id} ═══")
 
-    # ── Step 1: Domain-partitioned retrieval ──────────────────────────────────
+    
     domain_chunks = await retrieve_all_domains(
         application_id,
         candidate_k=settings.EXTRACTION_TOP_K_CANDIDATE,
@@ -128,90 +122,38 @@ async def run_pipeline(application_id: str) -> dict:
         return {"extracted_fields": empty, "raw": {f: None for f in ALL_FIELDS},
                 "chunks": [], "avg_chunk_score": 0.0}
 
-    # ── Step 2: Normalize OCR text ────────────────────────────────────────────
+    
     for domain in domain_chunks:
         normalize_chunks(domain_chunks[domain])
     logger.info(f"[Orchestrator] Normalized {len(all_chunks_raw)} chunks")
 
-    # ── Step 3: Regex pre-extraction (across all chunks) ─────────────────────
+    
     all_chunks_normalized = _flat_chunks(domain_chunks)
     regex_results = extract_from_chunks(all_chunks_normalized)
     found_by_regex = [f for f, m in regex_results.items() if m and m.value]
     if found_by_regex:
         logger.info(f"[Orchestrator] Regex pre-extracted: {found_by_regex}")
 
-    # ── Step 4: Cross-encoder re-ranking ─────────────────────────────────────
+    
     domain_chunks_reranked = await rerank_all_domains(
         domain_chunks,
         top_k=settings.EXTRACTION_TOP_K_FINAL,
     )
 
-    # ── Step 5: Sequential domain agent execution ─────────────────────────────
-    logger.info("[Orchestrator] Launching 6 domain agents sequentially (to respect free-tier rate limits)...")
-
-    agent_results = []
     
-    # 1. Identity
+    chunks_for_llm = _flat_chunks(domain_chunks_reranked)
+    logger.info(
+        f"[Orchestrator] Launching master extraction agent with "
+        f"{len(chunks_for_llm)} reranked chunks (was {len(all_chunks_normalized)} candidates)"
+    )
+
     try:
-        res = await identity_extractor.extract(domain_chunks_reranked.get("identity", []), regex_results, application_id)
-        agent_results.append(res)
+        merged = await master_extractor.extract(chunks_for_llm, regex_results, application_id)
     except Exception as e:
-        logger.error(f"[Orchestrator] Agent 'identity' failed: {e}")
-        agent_results.append(e)
-        
-    # 2. Financial
-    try:
-        res = await financial_extractor.extract(domain_chunks_reranked.get("financial", []), regex_results, application_id)
-        agent_results.append(res)
-    except Exception as e:
-        logger.error(f"[Orchestrator] Agent 'financial' failed: {e}")
-        agent_results.append(e)
+        logger.error(f"[Orchestrator] Master agent failed: {e}")
+        merged = {}
 
-    # 3. Bank
-    try:
-        res = await bank_extractor.extract(domain_chunks_reranked.get("bank", []), regex_results, application_id)
-        agent_results.append(res)
-    except Exception as e:
-        logger.error(f"[Orchestrator] Agent 'bank' failed: {e}")
-        agent_results.append(e)
-
-    # 4. Loan
-    try:
-        res = await loan_extractor.extract(domain_chunks_reranked.get("loan", []), regex_results, application_id)
-        agent_results.append(res)
-    except Exception as e:
-        logger.error(f"[Orchestrator] Agent 'loan' failed: {e}")
-        agent_results.append(e)
-
-    # 5. Promoter
-    try:
-        res = await promoter_extractor.extract(domain_chunks_reranked.get("promoter", []), regex_results, application_id)
-        agent_results.append(res)
-    except Exception as e:
-        logger.error(f"[Orchestrator] Agent 'promoter' failed: {e}")
-        agent_results.append(e)
-
-    # 6. Collateral
-    try:
-        res = await collateral_extractor.extract(domain_chunks_reranked.get("collateral", []), regex_results, application_id)
-        agent_results.append(res)
-    except Exception as e:
-        logger.error(f"[Orchestrator] Agent 'collateral' failed: {e}")
-        agent_results.append(e)
-
-    # Handle any agent failures gracefully
-    safe_results: list[dict[str, ExtractedField]] = []
-    agent_names = ["identity", "financial", "bank", "loan", "promoter", "collateral"]
-    for name, result in zip(agent_names, agent_results):
-        if isinstance(result, Exception):
-            safe_results.append({})
-        else:
-            safe_results.append(result)
-
-    # ── Step 6: Merge all agent results ──────────────────────────────────────
-    merged = _merge_agent_results(*safe_results)
-
-    # Ensure all expected fields exist in the merged dict
+    
     for field in ALL_FIELDS:
         if field not in merged:
             default_val: list | None = [] if field in ("loan_balances", "promoter_details", "collateral_details") else None
@@ -220,64 +162,49 @@ async def run_pipeline(application_id: str) -> dict:
     logger.info(f"[Orchestrator] Merge complete. Non-null fields: "
                 f"{[f for f, ef in merged.items() if ef.value is not None]}")
 
-    # ── Step 7: Second-pass retrieval for null required fields ────────────────
+    
     null_required = [f for f in REQUIRED_FIELDS if merged.get(f) and merged[f].value is None]
 
+    second_pass_chunks: list[dict] = []
     if null_required and settings.ENABLE_SECOND_PASS:
         logger.info(f"[Orchestrator] Second-pass for null fields: {null_required}")
-        second_chunks = await retrieve_targeted(null_required, application_id, candidate_k=25)
-        normalize_chunks(second_chunks)
+        second_candidates = await retrieve_targeted(null_required, application_id, candidate_k=25)
+        normalize_chunks(second_candidates)
 
-        if second_chunks:
-            # Re-run only the agents that own the missing fields
-            from services.extraction.retriever import DOMAIN_QUERIES
-            field_domain = {
-                "gstin": "identity", "pan": "identity", "cin": "identity", "llpin": "identity",
-                "annual_turnover": "financial", "net_profit": "financial", "total_liabilities": "financial",
-                "avg_monthly_balance": "bank", "cheque_bounce_count": "bank",
-            }
-            domains_needed = {field_domain[f] for f in null_required if f in field_domain}
-
-            second_pass_tasks = {}
-            if "identity" in domains_needed:
-                second_pass_tasks["identity"] = identity_extractor.extract(
-                    second_chunks, regex_results, application_id
+        if second_candidates:
+            second_query = " ".join(f.replace("_", " ") for f in null_required)
+            second_pass_chunks = await rerank(
+                second_query,
+                second_candidates,
+                top_k=min(len(second_candidates), settings.EXTRACTION_TOP_K_FINAL * 2),
+            )
+            logger.info(
+                f"[Orchestrator] Second-pass reranked {len(second_candidates)} → "
+                f"{len(second_pass_chunks)} chunks"
+            )
+            try:
+                second_pass_merged = await master_extractor.extract(
+                    second_pass_chunks, regex_results, application_id
                 )
-            if "financial" in domains_needed:
-                second_pass_tasks["financial"] = financial_extractor.extract(
-                    second_chunks, regex_results, application_id
-                )
-            if "bank" in domains_needed:
-                second_pass_tasks["bank"] = bank_extractor.extract(
-                    second_chunks, regex_results, application_id
-                )
+                for field, ef in second_pass_merged.items():
+                    if ef.value is not None and merged.get(field) and merged[field].value is None:
+                        merged[field] = ef
+                        logger.info(f"[Orchestrator] Second-pass filled: {field}")
+            except Exception as e:
+                logger.error(f"[Orchestrator] Second-pass master agent failed: {e}")
 
-            if second_pass_tasks:
-                for name, coroutine in second_pass_tasks.items():
-                    try:
-                        result = await coroutine
-                        for field, ef in result.items():
-                            if ef.value is not None and merged.get(field) and merged[field].value is None:
-                                merged[field] = ef
-                                logger.info(f"[Orchestrator] Second-pass filled: {field}")
-                    except Exception as e:
-                        logger.error(f"[Orchestrator] Second-pass agent '{name}' failed: {e}")
-
-            all_chunks_normalized.extend(second_chunks)
-
-    # ── Step 8: Verification agent ────────────────────────────────────────────
-    # Flatten all domain chunks again (now includes second-pass chunks)
+    
     all_chunks_final = _flat_chunks({
-        **domain_chunks_reranked,
-        "_second": all_chunks_normalized,
+        "_main": chunks_for_llm,
+        "_second": second_pass_chunks,
     })
 
     merged = await verification_agent.verify(merged, all_chunks_final, application_id)
 
-    # ── Step 9: Composite confidence scoring ──────────────────────────────────
+    
     merged = _finalise_confidence(merged, regex_results)
 
-    # ── Build return dict ─────────────────────────────────────────────────────
+    
     raw_values: dict = {}
     for field, ef in merged.items():
         raw_values[field] = ef.value

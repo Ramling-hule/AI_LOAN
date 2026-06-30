@@ -16,17 +16,13 @@ import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 
 const BankService = {
-  /**
-   * Get all linked bank accounts for an SME user.
-   */
+  
   async getLinkedAccounts(smeId) {
     logger.info(`Fetching linked bank accounts for SME user ${smeId}`);
     return await findLinkedAccountsBySmeId(smeId);
   },
 
-  /**
-   * Generate and store OTP. Logs the code in development.
-   */
+  
   async sendOtp(smeId, contact) {
     logger.info(`Requesting OTP code for SME ${smeId} to contact: ${contact}`);
 
@@ -34,13 +30,13 @@ const BankService = {
       throw ApiError.badRequest('Contact detail (email or phone) is required');
     }
 
-    // Generate a secure 6-digit numeric OTP code
+    
     const code = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Delete any existing OTP for this user and contact to prevent duplicates
+    
     await deleteOtpsByUserContact(smeId, contact);
 
-    // Store in database (expires in 2 minutes)
+    
     await createOtp({
       user_id: smeId,
       contact,
@@ -48,21 +44,19 @@ const BankService = {
       expiresInMs: 2 * 60 * 1000,
     });
 
-    // Logging OTP code (fulfills backend logging requirement)
+    
     logger.info(`[OTP LOG] Generated verification code for contact ${contact}: ${code}`);
 
-    // Return the code in response ONLY for local testing/preview ease
+    
     return {
       message: 'OTP verification code generated successfully',
       contact,
       expires_in_seconds: 120,
-      code_preview: code, // Preview allowed for local testing
+      code_preview: code, 
     };
   },
 
-  /**
-   * Verify OTP and link the bank account.
-   */
+  
   async verifyOtpAndLink(smeId, data) {
     const { bank_name, account_number, account_type, linked_contact, ifsc_code, code } = data;
 
@@ -72,33 +66,33 @@ const BankService = {
 
     logger.info(`Verifying OTP for contact ${linked_contact} to link with bank ${bank_name}`);
 
-    // Find the OTP record
+    
     const otp = await findOtp({ user_id: smeId, contact: linked_contact });
     if (!otp) {
       throw ApiError.notFound('No verification request found. Please request a new OTP.');
     }
 
-    // 1. Check expiration
+    
     if (new Date() > new Date(otp.expires_at)) {
       await deleteOtp(otp.id);
       throw ApiError.badRequest('Verification code has expired. Please request a new OTP.');
     }
 
-    // 2. Check and increment attempts
+    
     if (otp.attempts >= 3) {
       await deleteOtp(otp.id);
       throw ApiError.badRequest('Too many failed attempts. Please request a new OTP.');
     }
 
-    // Increment attempts
+    
     await incrementOtpAttempts(otp.id);
 
-    // 3. Verify OTP code match
+    
     if (otp.code !== code) {
       throw ApiError.badRequest(`Invalid verification code. ${3 - (otp.attempts + 1)} attempts remaining.`);
     }
 
-    // 4. Verification successful, check if bank account is already linked
+    
     const existing = await findAccountByNumberAndSmeId(smeId, bank_name, account_number);
 
     if (existing) {
@@ -106,7 +100,7 @@ const BankService = {
       throw ApiError.conflict('This bank account is already linked to your profile.');
     }
 
-    // Link account
+    
     const bankAccount = await createBankAccount({
       sme_id: smeId,
       bank_name,
@@ -116,16 +110,14 @@ const BankService = {
       ifsc_code,
     });
 
-    // Delete used OTP
+    
     await deleteOtp(otp.id);
 
     logger.info(`Successfully linked bank account ${account_number} (${bank_name}) for SME ${smeId}`);
     return bankAccount;
   },
 
-  /**
-   * Unlink a bank account.
-   */
+  
   async unlinkAccount(smeId, accountId) {
     logger.info(`Requesting to unlink account ${accountId} for SME user ${smeId}`);
 

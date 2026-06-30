@@ -3,27 +3,21 @@ import ApiResponse from '../utils/ApiResponse.js';
 import BankService from '../services/bank.service.js';
 import { recordAuditLog } from '../db/queries/auditLogs.queries.js';
 
-// ---------------------------------------------------------------------------
-// Bank Controller
-// ---------------------------------------------------------------------------
 
-/**
- * GET /api/v1/banks/accounts
- * Lists all verified bank accounts linked to the SME profile.
- */
+
+
+
+
 export const getLinkedAccounts = asyncHandler(async (req, res) => {
   const accounts = await BankService.getLinkedAccounts(req.user.id);
   return ApiResponse.ok(accounts, 'Linked bank accounts retrieved successfully').send(res);
 });
 
-/**
- * POST /api/v1/banks/otp/send
- * Triggers OTP generation for bank verification.
- */
+
 export const sendOtp = asyncHandler(async (req, res) => {
   const result = await BankService.sendOtp(req.user.id, req.body.contact);
 
-  // Record audit log
+  
   recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
@@ -40,14 +34,11 @@ export const sendOtp = asyncHandler(async (req, res) => {
   return ApiResponse.ok(result, 'Verification code sent successfully').send(res);
 });
 
-/**
- * POST /api/v1/banks/otp/verify
- * Verifies the OTP and links the bank account.
- */
+
 export const verifyOtpAndLink = asyncHandler(async (req, res) => {
   const account = await BankService.verifyOtpAndLink(req.user.id, req.body);
 
-  // Record audit log
+  
   recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',
@@ -66,14 +57,11 @@ export const verifyOtpAndLink = asyncHandler(async (req, res) => {
   return ApiResponse.created(account, 'Bank account verified and linked successfully').send(res);
 });
 
-/**
- * DELETE /api/v1/banks/accounts/:id
- * Unlinks a linked bank account.
- */
+
 export const unlinkAccount = asyncHandler(async (req, res) => {
   await BankService.unlinkAccount(req.user.id, req.params.id);
 
-  // Record audit log
+  
   recordAuditLog({
     actor_id: req.user.id,
     actor_ref_model: 'SMEUser',

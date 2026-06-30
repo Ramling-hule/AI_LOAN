@@ -1,6 +1,6 @@
-// ---------------------------------------------------------------------------
-// Loan API — endpoint wrappers for loan routes
-// ---------------------------------------------------------------------------
+
+
+
 
 import apiClient from './apiClient';
 
@@ -12,7 +12,7 @@ export const loanApi = {
   delete: (id) => apiClient.delete(`/loans/${id}`),
   getPartnerBanks: () => apiClient.get('/loans/partner-banks'),
   
-  // Stepper & Draft endpoints
+  
   createDraft: (bankName) => apiClient.post('/loans/draft', { bank_name: bankName }),
   saveDraft: (id, data) => apiClient.put(`/loans/draft/${id}`, data),
   submitLoan: (id) => apiClient.post(`/loans/draft/${id}/submit`),

@@ -1,12 +1,12 @@
 import supabase from '../supabaseClient.js';
 import { v4 as uuidv4 } from 'uuid';
 
-// ---------------------------------------------------------------------------
-// loans.queries.js
-// Supabase operations for loans and loan_status_history tables.
-// ---------------------------------------------------------------------------
 
-// ── Create ────────────────────────────────────────────────────────────────────
+
+
+
+
+
 
 export const createLoan = async ({ sme_id, bank_name }) => {
   const appId = `APP-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -28,13 +28,13 @@ export const createLoan = async ({ sme_id, bank_name }) => {
   if (error) throw error;
   if (!data) return null;
 
-  // Add _id and appId aliases
+  
   data._id = data.id;
   data.appId = data.app_id;
   return data;
 };
 
-// ── Read ──────────────────────────────────────────────────────────────────────
+
 
 export const findLoanById = async (id) => {
   const { data, error } = await supabase
@@ -60,7 +60,7 @@ export const findLoanByAppId = async (appId) => {
 };
 
 export const findLoans = async ({ sme_id, bank_name, status, search, page = 1, limit = 10 }) => {
-  // Using an inner join for search, or standard left join otherwise
+  
   let query = supabase
     .from('loans')
     .select('*, sme_users(*)', { count: 'exact' });
@@ -70,11 +70,11 @@ export const findLoans = async ({ sme_id, bank_name, status, search, page = 1, l
   if (status && status !== 'all') query = query.eq('status', status);
 
   if (search) {
-    // Note: Cross-table search with PostgREST requires using the !inner join syntax if filtering by it, 
-    // but the JS client has limitations with cross-table .or().
-    // If strict search across joined table is required, an RPC is typically best.
-    // For now, we fallback to filtering by the joined table locally or via a separate query if needed.
-    // We will attempt an embedded filter:
+    
+    
+    
+    
+    
     query = supabase.from('loans').select('*, sme_users!inner(*)', { count: 'exact' });
     if (sme_id) query = query.eq('sme_id', sme_id);
     if (bank_name) query = query.eq('bank_name', bank_name);
@@ -99,10 +99,10 @@ export const findLoans = async ({ sme_id, bank_name, status, search, page = 1, l
   };
 };
 
-// ── Update ────────────────────────────────────────────────────────────────────
+
 
 export const updateLoanDraft = async (id, payload) => {
-  // Fetch existing first to merge jsonb fields natively without RPC
+  
   const { data: existing } = await supabase.from('loans').select('business_info, financial_info, behavioural_questions').eq('id', id).single();
   if (!existing) return null;
 
@@ -115,7 +115,7 @@ export const updateLoanDraft = async (id, payload) => {
   const jsonb = ['business_info', 'financial_info', 'behavioural_questions'];
   for (const field of jsonb) {
     if (payload[field] !== undefined) {
-      // Merge json objects
+      
       updates[field] = { ...(existing[field] || {}), ...payload[field] };
     }
   }
@@ -230,7 +230,7 @@ export const deleteLoan = async (id) => {
   return data;
 };
 
-// ── Status History ────────────────────────────────────────────────────────────
+
 
 export const createStatusHistory = async ({ loan_id, from_status, to_status, changed_by, changed_by_name, changed_by_model, notes, missing_docs = [] }) => {
   const { data, error } = await supabase
@@ -271,7 +271,7 @@ export const getLastMissingInfoHistory = async (loanId) => {
   return data;
 };
 
-// ── Private Helpers ───────────────────────────────────────────────────────────
+
 
 const _shapeLoan = (row) => {
   if (!row) return null;
@@ -280,7 +280,7 @@ const _shapeLoan = (row) => {
   loan._id = row.id;
   loan.appId = row.app_id;
 
-  // Repackage the joined sme_users object
+  
   if (row.sme_users) {
     loan.sme_id = {
       id: row.sme_users.id,

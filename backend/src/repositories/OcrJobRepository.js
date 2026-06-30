@@ -34,4 +34,4 @@ class OcrJobRepository {
   }
 }
 
-export default new OcrJobRepository(); // Export singleton
+export default new OcrJobRepository(); 

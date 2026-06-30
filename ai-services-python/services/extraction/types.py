@@ -40,7 +40,7 @@ class ExtractedField:
         if self.value is None:
             return False
         if isinstance(self.value, (list,)) and len(self.value) == 0:
-            return True   # empty list is valid (no loans / no collateral)
+            return True   
         return True
 
     def to_confidence_record(self) -> dict:
@@ -53,13 +53,13 @@ class ExtractedField:
             "source": self.source,
             "page": self.page,
             "document_type": self.document_type,
-            "evidence": (self.evidence or "")[:500],  # cap at 500 chars
+            "evidence": (self.evidence or "")[:500],  
             "rerank_score": round(self.rerank_score, 4),
             "retrieval_score": round(self.retrieval_score, 4),
         }
 
 
-# ── Canonical field list ──────────────────────────────────────────────────────
+
 
 SCALAR_FIELDS: list[str] = [
     "gstin", "pan", "cin", "llpin",
@@ -73,7 +73,7 @@ ARRAY_FIELDS: list[str] = [
 
 ALL_FIELDS: list[str] = SCALAR_FIELDS + ARRAY_FIELDS
 
-# Fields considered mandatory for a "complete" extraction
+
 REQUIRED_FIELDS: list[str] = [
     "gstin", "pan", "annual_turnover", "net_profit", "avg_monthly_balance",
 ]

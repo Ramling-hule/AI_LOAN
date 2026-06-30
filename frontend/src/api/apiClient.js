@@ -1,19 +1,19 @@
 import axios from 'axios';
 import { useAuthStore } from '@/store/authStore.js';
 
-// ---------------------------------------------------------------------------
-// Axios API Client
-// ---------------------------------------------------------------------------
+
+
+
 
 const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/v1',
-  timeout: 600000, // 10 min — Ollama inference can be slow on CPU
-  withCredentials: true, // send cookies on every request by default
+  timeout: 600000, 
+  withCredentials: true, 
   headers: { 'Content-Type': 'application/json' },
 });
 
 
-// ── Request Interceptor — inject access token ────────────────────────────────────────
+
 apiClient.interceptors.request.use(
   (config) => {
     const { accessToken } = useAuthStore.getState();
@@ -25,7 +25,7 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// ── Response Interceptor — silent token refresh on 401 ───────────────────
+
 let isRefreshing = false;
 let failedQueue = [];
 
@@ -45,13 +45,13 @@ apiClient.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // Do NOT intercept 401s from auth endpoints (login, register, mfa, refresh).
-    // Let the component handle the error directly so we can show "Invalid password", etc.
+    
+    
     const isAuthEndpoint = originalRequest.url?.includes('/auth/');
 
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       if (isRefreshing) {
-        // Queue requests while refresh is in-flight
+        
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         })
@@ -66,7 +66,7 @@ apiClient.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        // Use httpOnly cookie — no body needed
+        
         const { data } = await axios.post(
           `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/v1'}/auth/refresh`,
           {},

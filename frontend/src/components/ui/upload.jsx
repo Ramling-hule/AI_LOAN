@@ -31,14 +31,14 @@ export function Upload({
     setError(null);
     if (!selectedFile) return false;
 
-    // Check size limit
+    
     const sizeInMB = selectedFile.size / (1024 * 1024);
     if (sizeInMB > maxSizeMB) {
       setError(`File size exceeds the limit of ${maxSizeMB}MB.`);
       return false;
     }
 
-    // Check extension
+    
     const extension = `.${selectedFile.name.split('.').pop().toLowerCase()}`;
     const acceptedExtensions = accept.split(',').map((ext) => ext.trim().toLowerCase());
     if (!acceptedExtensions.includes(extension)) {

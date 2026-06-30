@@ -12,10 +12,10 @@ import OcrService from './ocr.service.js';
 import EmailService from './email.service.js';
 import ExtractionService from './extraction.service.js';
 
-// ---------------------------------------------------------------------------
-// Loan Service — PostgreSQL version
-// All Mongoose operations replaced with SQL query functions.
-// ---------------------------------------------------------------------------
+
+
+
+
 
 const PARTNER_BANKS = [
   { id: 'b1', name: 'State Bank of India', branch: 'Corporate Mumbai', ifsc: 'SBIN0000300', rate: '8.9% - 10.5%', limit: '₹50L', time: '5-7 days' },
@@ -42,7 +42,7 @@ const VALID_TRANSITIONS = {
   disbursed:        { next: [],                                                    roles: [] },
 };
 
-// ── Cloudinary helpers ────────────────────────────────────────────────────────
+
 
 const uploadToCloudinary = (fileBuffer, originalName) =>
   new Promise((resolve, reject) => {
@@ -59,12 +59,22 @@ const deleteFromCloudinary = (publicId) =>
     cloudinary.uploader.destroy(publicId, (err, result) => err ? reject(err) : resolve(result));
   });
 
-// ── Service ───────────────────────────────────────────────────────────────────
+
 
 const LoanService = {
 
   async getPartnerBanks() {
     return PARTNER_BANKS;
+  },
+
+  async createLoan(smeId, data) {
+    const sme = await findSMEById(smeId);
+    if (!sme) throw ApiError.notFound('SME Applicant account not found');
+    
+    
+    const loan = await createLoan({ sme_id: smeId, ...data });
+    logger.info(`Legacy loan application created: ${loan.id}`);
+    return loan;
   },
 
   async getLoans(userContext, queryParams = {}) {
@@ -125,7 +135,7 @@ const LoanService = {
     if (!loan || loanSmeId !== smeId) throw ApiError.notFound('Loan application not found');
     if (!['draft', 'missing_info'].includes(loan.status)) throw ApiError.badRequest('Cannot upload documents in current status');
 
-    // Cleanup old Cloudinary file + vector chunks
+    
     const existingDoc = loan.documents?.[documentType];
     if (existingDoc?.public_id) {
       await deleteFromCloudinary(existingDoc.public_id).catch(err => logger.warn(`Cloudinary cleanup: ${err.message}`));
@@ -136,7 +146,7 @@ const LoanService = {
 
     const uploadResult = await uploadToCloudinary(file.buffer, file.originalname);
 
-    // Trigger OCR asynchronously
+    
     let ocrJobId = null;
     try {
       const sme = await findSMEById(smeId);
@@ -168,7 +178,7 @@ const LoanService = {
 
     await setLoanDocument(loanId, documentType, docData);
 
-    // Auto-transition from missing_info if all required docs uploaded
+    
     if (loan.status === 'missing_info') {
       const lastHistory = await getLastMissingInfoHistory(loanId);
       if (lastHistory?.missing_docs?.length > 0) {
@@ -217,7 +227,7 @@ const LoanService = {
     if (!loan || loanSmeId !== smeId) throw ApiError.notFound('Loan application not found');
     if (loan.status !== 'draft') throw ApiError.badRequest('Application is already submitted');
 
-    // Validation
+    
     const bi = loan.business_info;
     if (!bi?.legal_name || !bi?.registration_type || !bi?.gstin || !bi?.incorporation_date || !bi?.industry_type)
       throw ApiError.badRequest('Missing business information. Please complete Step 1.');
@@ -247,11 +257,6 @@ const LoanService = {
       loan_id: loanId, from_status: 'draft', to_status: 'submitted',
       changed_by: smeId, changed_by_name: sme?.full_name || 'SME Applicant',
       changed_by_model: 'SMEUser', notes: 'Initial loan application submission.',
-    });
-
-    // Auto-trigger Extraction in the background
-    ExtractionService.triggerExtraction(loanId, { role: 'system', id: smeId }).catch(err => {
-      logger.error(`[Auto-Trigger] Failed to start extraction for ${loanId}: ${err.message}`);
     });
 
     return findLoanById(loanId);
@@ -323,7 +328,7 @@ const LoanService = {
       missing_docs: toStatus === 'missing_info' ? (missingDocs || []) : [],
     });
 
-    // Email notifications
+    
     try {
       if (toStatus === 'missing_info') {
         const sme = await findSMEById(loan.sme_id?.id || loan.sme_id);

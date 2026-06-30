@@ -1,12 +1,12 @@
 import supabase from '../supabaseClient.js';
 import { v4 as uuidv4 } from 'uuid';
 
-// ---------------------------------------------------------------------------
-// users.queries.js
-// All Supabase operations for sme_users and bank_admin_users tables.
-// ---------------------------------------------------------------------------
 
-// ── SME Users ─────────────────────────────────────────────────────────────────
+
+
+
+
+
 
 export const findSMEByEmail = async (email, includePassword = false) => {
   const fields = includePassword
@@ -75,7 +75,7 @@ export const searchSMEUsers = async (searchTerm) => {
   return data || [];
 };
 
-// ── Bank Admin Users ───────────────────────────────────────────────────────────
+
 
 export const findBankAdminByEmail = async (email, includePassword = false) => {
   const fields = includePassword 
@@ -144,7 +144,7 @@ export const updateBankAdminLastLogin = async (id) => {
   if (error) throw error;
 };
 
-// ── Roles & Permissions ───────────────────────────────────────────────────────
+
 
 export const findRoleByName = async (name) => {
   const { data, error } = await supabase

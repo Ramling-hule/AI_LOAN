@@ -1,13 +1,7 @@
 import logger from '../utils/logger.js';
 
 export const EmailService = {
-  /**
-   * Send a simulated email.
-   * @param {object} params
-   * @param {string} params.to
-   * @param {string} params.subject
-   * @param {string} params.html
-   */
+  
   async sendEmail({ to, subject, html }) {
     logger.info(`[Email Service] SIMULATED EMAIL SENT to: ${to}`);
     logger.info(`[Email Service] Subject: ${subject}`);
@@ -15,9 +9,7 @@ export const EmailService = {
     return { success: true, messageId: `sim_${Date.now()}` };
   },
 
-  /**
-   * Send notification to SME when information is requested.
-   */
+  
   async sendMissingInfoRequest(smeUser, loan, missingFieldsList) {
     const subject = `ACTION REQUIRED: Missing Information for Loan Application ${loan.appId}`;
     const fieldsHtml = missingFieldsList.map(f => `<li>${f}</li>`).join('');
@@ -33,9 +25,7 @@ export const EmailService = {
     return this.sendEmail({ to: smeUser.email, subject, html });
   },
 
-  /**
-   * Send notification to Bank Underwriter when SME completes uploads.
-   */
+  
   async sendMissingInfoCompleted(bankAdmin, loan) {
     const subject = `NOTIFICATION: Missing Info Submitted for Loan ${loan.appId}`;
     const html = `

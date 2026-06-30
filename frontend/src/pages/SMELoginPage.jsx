@@ -14,9 +14,9 @@ import {
 
 import { useAuth } from '@/context/AuthContext.jsx';
 
-// ---------------------------------------------------------------------------
-// SME Login Page
-// ---------------------------------------------------------------------------
+
+
+
 
 export default function SMELoginPage() {
   const navigate = useNavigate();
@@ -75,16 +75,16 @@ export default function SMELoginPage() {
   if (mfaRequired) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 flex items-center justify-center p-4">
-        {/* Background decoration */}
+        {}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
           <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" />
         </div>
 
         <div className="relative w-full max-w-md">
-          {/* Card */}
+          {}
           <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-            {/* Header */}
+            {}
             <div className="text-center mb-8">
               <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-500/20 border border-blue-500/30 mb-4">
                 <Lock className="w-7 h-7 text-blue-400" />
@@ -93,7 +93,7 @@ export default function SMELoginPage() {
               <p className="text-slate-400 text-sm">Please enter the 6-digit OTP code sent to your email</p>
             </div>
 
-            {/* OTP error */}
+            {}
             {otpError && (
               <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6">
                 <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
@@ -101,7 +101,7 @@ export default function SMELoginPage() {
               </div>
             )}
 
-            {/* Form */}
+            {}
             <form onSubmit={handleVerifyOtp} className="space-y-5">
               <div className="space-y-1.5">
                 <label htmlFor="otp-code" className="block text-sm font-medium text-slate-300">
@@ -155,16 +155,16 @@ export default function SMELoginPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 flex items-center justify-center p-4">
-      {/* Background decoration */}
+      {}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
         <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" />
       </div>
 
       <div className="relative w-full max-w-md">
-        {/* Card */}
+        {}
         <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-          {/* Header */}
+          {}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-500/20 border border-blue-500/30 mb-4">
               <Building2 className="w-7 h-7 text-blue-400" />
@@ -173,7 +173,7 @@ export default function SMELoginPage() {
             <p className="text-slate-400 text-sm">Sign in to your business account</p>
           </div>
 
-          {/* Server error */}
+          {}
           {serverError && (
             <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6">
               <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
@@ -181,9 +181,9 @@ export default function SMELoginPage() {
             </div>
           )}
 
-          {/* Form */}
+          {}
           <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
-            {/* Email */}
+            {}
             <div className="space-y-1.5">
               <label htmlFor="sme-email" className="block text-sm font-medium text-slate-300">
                 Email address
@@ -211,7 +211,7 @@ export default function SMELoginPage() {
               )}
             </div>
 
-            {/* Password */}
+            {}
             <div className="space-y-1.5">
               <label htmlFor="sme-password" className="block text-sm font-medium text-slate-300">
                 Password
@@ -244,7 +244,7 @@ export default function SMELoginPage() {
               )}
             </div>
 
-            {/* Submit */}
+            {}
             <button
               id="sme-login-btn"
               type="submit"
@@ -265,7 +265,7 @@ export default function SMELoginPage() {
             </button>
           </form>
 
-          {/* Footer links */}
+          {}
           <div className="mt-6 text-center space-y-2">
             <p className="text-slate-300 text-sm">
               Don't have an account?{' '}
@@ -288,7 +288,7 @@ export default function SMELoginPage() {
           </div>
         </div>
 
-        {/* Brand */}
+        {}
         <p className="text-center text-slate-400 text-xs mt-6">
           AI Loan Underwriting Platform · Secure & Encrypted
         </p>

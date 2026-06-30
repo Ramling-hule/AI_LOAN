@@ -1,10 +1,10 @@
 import supabase from '../supabaseClient.js';
 import { v4 as uuidv4 } from 'uuid';
 
-// ---------------------------------------------------------------------------
-// bankAccounts.queries.js
-// Supabase operations for the bank_accounts table.
-// ---------------------------------------------------------------------------
+
+
+
+
 
 export const findLinkedAccountsBySmeId = async (smeId) => {
   const { data, error } = await supabase

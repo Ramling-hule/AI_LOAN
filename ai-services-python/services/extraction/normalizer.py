@@ -15,38 +15,38 @@ from typing import Optional
 
 from loguru import logger
 
-# ── Monetary conversion constants ─────────────────────────────────────────────
 
-_CRORE = 10_000_000   # 1 Crore = 10,000,000
-_LAKH  = 100_000      # 1 Lakh  = 100,000
-_THOU  = 1_000        # 1 Thousand = 1,000
 
-# ── Regex patterns ────────────────────────────────────────────────────────────
+_CRORE = 10_000_000   
+_LAKH  = 100_000      
+_THOU  = 1_000        
 
-# Matches "2.3 Crore", "2.3Cr", "2.3 cr"
+
+
+
 _CRORE_RE = re.compile(
     r"""([\d,\s]+(?:\.\d+)?)\s*(?:crore|cr\.?)\b""",
     re.IGNORECASE,
 )
-# Matches "12.5 Lakh", "12.5L", "12.5 lacs"
+
 _LAKH_RE = re.compile(
     r"""([\d,\s]+(?:\.\d+)?)\s*(?:lakh|lac(?:s)?|l\.?)\b""",
     re.IGNORECASE,
 )
-# Matches "500 thousand", "500K"
+
 _THOUSAND_RE = re.compile(
     r"""([\d,\s]+(?:\.\d+)?)\s*(?:thousand|k)\b""",
     re.IGNORECASE,
 )
-# Currency prefix: ₹, Rs., INR (strip before number)
+
 _CURRENCY_PREFIX_RE = re.compile(r"(?:₹|Rs\.?|INR)\s*", re.IGNORECASE)
-# Indian comma-formatted numbers: 1,20,00,000
+
 _INDIAN_NUM_RE = re.compile(r"\d{1,2}(?:,\d{2})+(?:,\d{3})?")
-# Collapsed spaces inside a number/identifier caused by OCR
+
 _SPACED_ALPHANUM_RE = re.compile(r"(?<=[A-Z0-9])\s(?=[A-Z0-9])")
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+
 
 def normalize_chunk(text: str) -> str:
     """
@@ -62,35 +62,35 @@ def normalize_chunk(text: str) -> str:
     if not text:
         return text
 
-    # Step 1: Normalise whitespace
+    
     text = re.sub(r"\r\n|\r", "\n", text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
 
-    # Step 2: Strip currency prefixes but preserve surrounding whitespace
-    # "Rs. 2.3" → "2.3",  "Total: ₹2.3" → "Total: 2.3"
+    
+    
     text = re.sub(r'(?:₹|Rs\.?|INR)\s*', ' ', text, flags=re.IGNORECASE)
-    text = re.sub(r'[ \t]+', ' ', text)  # re-collapse any doubled spaces
+    text = re.sub(r'[ \t]+', ' ', text)  
 
-    # Step 3: Indian number formatting → plain digits (do before Crore/Lakh)
+    
     def _deindian_num(m: re.Match) -> str:
         return m.group(0).replace(",", "")
     text = _INDIAN_NUM_RE.sub(_deindian_num, text)
 
-    # Step 4: Crore → plain integer/float
+    
     def _crore(m: re.Match) -> str:
         try:
             raw = m.group(1).replace(",", "").strip()
             num = float(raw)
             result = str(int(num * _CRORE)) if num == int(num) else f"{num * _CRORE:.0f}"
-            # Preserve a leading space if the match started with one
+            
             prefix = " " if m.group(1).startswith(" ") else ""
             return prefix + result
         except ValueError:
             return m.group(0)
     text = _CRORE_RE.sub(_crore, text)
 
-    # Lakh → plain integer/float
+    
     def _lakh(m: re.Match) -> str:
         try:
             raw = m.group(1).replace(",", "").strip()
@@ -102,7 +102,7 @@ def normalize_chunk(text: str) -> str:
             return m.group(0)
     text = _LAKH_RE.sub(_lakh, text)
 
-    # Thousand → plain integer/float
+    
     def _thousand(m: re.Match) -> str:
         try:
             raw = m.group(1).replace(",", "").strip()
@@ -113,8 +113,8 @@ def normalize_chunk(text: str) -> str:
             return m.group(0)
     text = _THOUSAND_RE.sub(_thousand, text)
 
-    # Step 5: Collapse OCR-spaced identifiers  e.g. "2 7 A B C" → "27ABC"
-    # Only collapse single-char tokens that look like parts of an identifier
+    
+    
     text = _SPACED_ALPHANUM_RE.sub("", text)
 
     return text.strip()
@@ -148,10 +148,10 @@ def parse_indian_amount(text: str) -> Optional[float]:
         return None
 
     text = text.strip()
-    # Strip currency symbols
+    
     text = _CURRENCY_PREFIX_RE.sub("", text).strip()
 
-    # Check for unit multipliers
+    
     m = _CRORE_RE.search(text)
     if m:
         try:
@@ -173,7 +173,7 @@ def parse_indian_amount(text: str) -> Optional[float]:
         except ValueError:
             pass
 
-    # Plain number (possibly with Indian commas or spaces)
+    
     plain = re.sub(r"[,\s]", "", text)
     try:
         return float(plain)

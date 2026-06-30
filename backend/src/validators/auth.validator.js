@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
-// ---------------------------------------------------------------------------
-// Auth Validators — Zod schemas for SME & BankAdmin register/login
-// ---------------------------------------------------------------------------
 
-// ── Shared ────────────────────────────────────────────────────────────────────
+
+
+
+
 
 const strongPassword = z
   .string()
@@ -15,7 +15,7 @@ const strongPassword = z
 
 const phoneRegex = /^\+?[1-9]\d{7,14}$/;
 
-// ── SME Register ──────────────────────────────────────────────────────────────
+
 
 export const smeRegisterSchema = z.object({
   full_name: z
@@ -45,7 +45,7 @@ export const smeRegisterSchema = z.object({
     .optional(),
 });
 
-// ── Bank Admin Register ────────────────────────────────────────────────────────
+
 
 export const bankAdminRegisterSchema = z.object({
   bank_name: z.string().trim().min(2).max(200),
@@ -75,14 +75,14 @@ export const bankAdminRegisterSchema = z.object({
   password: strongPassword,
 });
 
-// ── Login (shared for both user types) ───────────────────────────────────────
+
 
 export const loginSchema = z.object({
   email: z.string().trim().email('Invalid email address').toLowerCase(),
   password: z.string().min(1, 'Password is required'),
 });
 
-// ── Refresh Token (body fallback if cookie not present) ───────────────────────
+
 
 export const refreshTokenSchema = z.object({
   refreshToken: z.string().min(1, 'Refresh token is required').optional(),

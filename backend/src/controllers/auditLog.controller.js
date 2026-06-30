@@ -4,30 +4,27 @@ import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 
-// ---------------------------------------------------------------------------
-// Audit Log Controller
-// Exposes secure endpoints for bank administrators and super administrators
-// to review system-wide or bank-specific audit logs.
-// ---------------------------------------------------------------------------
 
-/**
- * GET /api/v1/audit-logs
- * Fetch audit logs. Scoped to the bank of the requesting admin.
- */
+
+
+
+
+
+
 export const getAuditLogs = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, action, status, search } = req.query;
 
   let query = supabase.from('audit_logs').select('*', { count: 'exact' });
 
-  // Role protection: only bank_admin, bank_underwriter and super_admin can view audit logs
+  
   if (req.user.role === 'bank_admin' || req.user.role === 'bank_underwriter') {
-    // Scope search results to only their bank
+    
     const bankAdmin = await findBankAdminById(req.user.id);
     if (!bankAdmin) {
       throw ApiError.unauthorized('Bank administrator account not found');
     }
 
-    // Since audit_logs uses polymorphic IDs (no foreign keys), we must fetch the valid IDs for this bank first
+    
     const { data: admins } = await supabase.from('bank_admin_users').select('id').eq('bank_name', bankAdmin.bank_name);
     const { data: loans } = await supabase.from('loans').select('id').eq('bank_name', bankAdmin.bank_name);
     
@@ -43,7 +40,7 @@ export const getAuditLogs = asyncHandler(async (req, res) => {
     throw ApiError.forbidden('Role not authorized to access audit logs');
   }
 
-  // Filters
+  
   if (action) query = query.eq('action', action);
   if (status) query = query.eq('status', status);
   if (search) {

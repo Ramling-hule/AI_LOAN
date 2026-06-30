@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from loguru import logger
 from config.database import fetchrow
 from services.extraction.extraction_service import extraction_service
+from services.processing_queue import processing_queue
 
 router = APIRouter(prefix="/api/v1/extraction", tags=["Extraction"])
 
@@ -20,18 +21,18 @@ class RunExtractionBody(BaseModel):
 async def run_extraction(application_id: str, body: RunExtractionBody):
     """
     Trigger parameter extraction for a loan application.
-    Equivalent to POST /api/v1/extraction/run/:applicationId.
+    Enqueues the job to run sequentially.
     """
     try:
-        result = await extraction_service.run(
-            application_id=application_id,
-            loan_id=body.loan_id,
-            enable_second_pass=body.enable_second_pass,
-            force=False,
-        )
-        return {"success": True, "data": result}
+        payload = {
+            "application_id": application_id,
+            "enable_second_pass": body.enable_second_pass,
+            "force": False
+        }
+        job_id = await processing_queue.enqueue(body.loan_id, 'extraction', payload)
+        return {"success": True, "data": {"job_id": job_id, "status": "queued"}}
     except Exception as e:
-        logger.error(f"[Extraction Router] Extraction failed for {application_id}: {e}")
+        logger.error(f"[Extraction Router] Enqueue failed for {application_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -39,15 +40,15 @@ async def run_extraction(application_id: str, body: RunExtractionBody):
 async def rerun_extraction(application_id: str, body: RunExtractionBody):
     """Force re-extraction, bypassing the cache."""
     try:
-        result = await extraction_service.run(
-            application_id=application_id,
-            loan_id=body.loan_id,
-            enable_second_pass=body.enable_second_pass,
-            force=True,
-        )
-        return {"success": True, "data": result}
+        payload = {
+            "application_id": application_id,
+            "enable_second_pass": body.enable_second_pass,
+            "force": True
+        }
+        job_id = await processing_queue.enqueue(body.loan_id, 'extraction', payload)
+        return {"success": True, "data": {"job_id": job_id, "status": "queued"}}
     except Exception as e:
-        logger.error(f"[Extraction Router] Re-extraction failed for {application_id}: {e}")
+        logger.error(f"[Extraction Router] Re-extraction enqueue failed for {application_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

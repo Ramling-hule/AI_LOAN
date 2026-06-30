@@ -1,7 +1,7 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 
-// Pages
+
 import LoginPage from '@/pages/LoginPage';
 import SMELoginPage from '@/pages/SMELoginPage';
 import SMERegisterPage from '@/pages/SMERegisterPage';
@@ -11,13 +11,13 @@ import UnauthorizedPage from '@/pages/UnauthorizedPage';
 import DashboardPage from '@/pages/DashboardPage';
 import LoanApplicationPage from '@/pages/LoanApplicationPage';
 
-// Components
+
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useAuth } from '@/context/AuthContext';
 
-// ---------------------------------------------------------------------------
-// App — Root routing configuration
-// ---------------------------------------------------------------------------
+
+
+
 
 function App() {
   const { isAuthenticated } = useAuth();
@@ -25,7 +25,7 @@ function App() {
   return (
     <div className="min-h-screen bg-background text-foreground animate-fade-in">
       <Routes>
-        {/* Gateway routes: redirect to dashboard if already logged in */}
+        {}
         <Route
           path="/"
           element={
@@ -39,7 +39,7 @@ function App() {
           }
         />
 
-        {/* SME Auth Routes */}
+        {}
         <Route
           path="/sme/login"
           element={
@@ -53,7 +53,7 @@ function App() {
           }
         />
 
-        {/* Bank Admin Auth Routes */}
+        {}
         <Route
           path="/bank/login"
           element={
@@ -67,10 +67,10 @@ function App() {
           }
         />
 
-        {/* Access Fallbacks */}
+        {}
         <Route path="/unauthorized" element={<UnauthorizedPage />} />
 
-        {/* Protected Dashboard (available to both SME and Bank Admin) */}
+        {}
         <Route
           path="/dashboard"
           element={
@@ -80,7 +80,7 @@ function App() {
           }
         />
 
-        {/* Protected SME-Only Loan application */}
+        {}
         <Route
           path="/loan/apply"
           element={
@@ -90,7 +90,7 @@ function App() {
           }
         />
 
-        {/* 404 fallback */}
+        {}
         <Route
           path="*"
           element={

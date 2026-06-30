@@ -2,9 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ──────────────────────────────────────────────────────────────────────────
-   shadcn/ui CSS Variables — Light Mode
-────────────────────────────────────────────────────────────────────────── */
+
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -38,7 +36,7 @@
     --radius: 0.5rem;
   }
 
-  /* Dark Mode */
+  
   .dark {
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
@@ -70,9 +68,7 @@
   }
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   Base Styles
-────────────────────────────────────────────────────────────────────────── */
+
 @layer base {
   * {
     @apply border-border;
@@ -83,20 +79,18 @@
     font-feature-settings: 'rlig' 1, 'calt' 1;
   }
 
-  /* Smooth scrolling */
+  
   html {
     scroll-behavior: smooth;
   }
 
-  /* Focus ring */
+  
   :focus-visible {
     @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   Utility Extensions
-────────────────────────────────────────────────────────────────────────── */
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;

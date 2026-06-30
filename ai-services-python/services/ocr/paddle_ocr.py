@@ -18,7 +18,7 @@ from config.settings import get_settings
 
 settings = get_settings()
 
-# Global PaddleOCR instance (expensive to initialize — singleton)
+
 _ocr_engine = None
 _ocr_lock = asyncio.Lock()
 
@@ -30,11 +30,11 @@ def _get_engine():
         try:
             from paddleocr import PaddleOCR
             _ocr_engine = PaddleOCR(
-                use_angle_cls=True,       # auto-detect rotated text
+                use_angle_cls=True,       
                 lang=settings.OCR_LANGUAGE,
                 use_gpu=settings.OCR_USE_GPU,
                 show_log=False,
-                # Use PP-OCRv4 (highest accuracy)
+                
                 ocr_version="PP-OCRv4",
             )
             logger.info(f"✅  PaddleOCR initialized (lang={settings.OCR_LANGUAGE}, gpu={settings.OCR_USE_GPU})")

@@ -3,10 +3,10 @@ import { v2 as cloudinary } from 'cloudinary';
 import env from './env.js';
 import logger from '../utils/logger.js';
 
-// ---------------------------------------------------------------------------
-// Cloudinary SDK initialization.
-// Call initCloudinary() once at app startup.
-// ---------------------------------------------------------------------------
+
+
+
+
 
 let _initialized = false;
 

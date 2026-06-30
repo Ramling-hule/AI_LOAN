@@ -31,7 +31,7 @@ export default function LoanApplicationPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Stepper state
+  
   const [currentStep, setCurrentStep] = useState(1);
   const [draftId, setDraftId] = useState(location.state?.draftId || null);
   const [loading, setLoading] = useState(false);
@@ -42,7 +42,7 @@ export default function LoanApplicationPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [autoSaveStatus, setAutoSaveStatus] = useState('');
 
-  // Form State
+  
   const [formData, setFormData] = useState({
     bank_name: location.state?.bankName || '',
     amount: 1000000,
@@ -70,16 +70,16 @@ export default function LoanApplicationPage() {
     },
   });
 
-  // Documents State
+  
   const [uploadedDocs, setUploadedDocs] = useState({});
-  const [uploadingDocs, setUploadingDocs] = useState({}); // { [docType]: progressNumber }
+  const [uploadingDocs, setUploadingDocs] = useState({}); 
 
-  // PDF Preview State
+  
   const [previewUrl, setPreviewUrl] = useState('');
   const [previewTitle, setPreviewTitle] = useState('');
   const [previewType, setPreviewType] = useState('');
 
-  // 1. Fetch partner banks and load draft if ID provided
+  
   useEffect(() => {
     const initPage = async () => {
       try {
@@ -132,7 +132,7 @@ export default function LoanApplicationPage() {
     initPage();
   }, [draftId]);
 
-  // Handle Form changes
+  
   const updateBusinessInfo = (field, value) => {
     setFormData((prev) => ({
       ...prev,
@@ -154,7 +154,7 @@ export default function LoanApplicationPage() {
     }));
   };
 
-  // Live EMI calculation
+  
   const interestRate = 11.5;
   const monthlyInterest = interestRate / 12 / 100;
   const emi = formData.amount && formData.tenure
@@ -164,7 +164,7 @@ export default function LoanApplicationPage() {
       )
     : 0;
 
-  // Step Validation
+  
   const validateStep = (step) => {
     setErrorMsg('');
     switch (step) {
@@ -194,24 +194,24 @@ export default function LoanApplicationPage() {
         if (!formData.revenue || formData.revenue < 10000) return 'Monthly Turnover must be positive';
         break;
       case 4:
-        // KYC Uploads
+        
         if (!uploadedDocs.pan?.url) return 'PAN Card upload is required';
         if (!uploadedDocs.aadhaar?.url) return 'Aadhaar Card upload is required';
         if (!uploadedDocs.gst_certificate?.url) return 'GST Registration Certificate is required';
         break;
       case 5:
-        // Financial Docs
+        
         if (!uploadedDocs.bank_statements?.url) return '6-Month Bank Statement is required';
         if (!uploadedDocs.itr?.url) return 'Income Tax Returns (ITR) is required';
         if (!uploadedDocs.balance_sheets?.url) return 'Audited Balance Sheet is required';
         if (!uploadedDocs.profit_loss?.url) return 'Profit & Loss Statement is required';
         break;
       case 6:
-        // Collateral
+        
         if (!uploadedDocs.loan_documents?.url) return 'Collateral/Sanctioned Loan Documents are required';
         break;
       case 7:
-        // Behavioural
+        
         if (!formData.behavioural_questions.business_challenges) return 'Please answer business challenges question';
         if (!formData.behavioural_questions.repayment_plan) return 'Please answer repayment plan question';
         if (!formData.behavioural_questions.future_goals) return 'Please answer future goals question';
@@ -223,7 +223,7 @@ export default function LoanApplicationPage() {
     return '';
   };
 
-  // Draft Save Handler
+  
   const handleSaveDraft = async (nextStep = null) => {
     setErrorMsg('');
     try {
@@ -231,7 +231,7 @@ export default function LoanApplicationPage() {
       let currentId = draftId;
 
       if (!currentId) {
-        // Initialize Draft
+        
         const res = await loanApi.createDraft(formData.bank_name);
         currentId = res.data.data._id ?? res.data.data.id;
         setDraftId(currentId);
@@ -277,11 +277,11 @@ export default function LoanApplicationPage() {
     }
   };
 
-  // Document upload triggers
+  
   const handleFileUpload = async (docType, file) => {
     if (!file) return;
 
-    // Local validation checks
+    
     const allowedTypes = [
       'application/pdf',
       'image/jpeg',
@@ -305,7 +305,7 @@ export default function LoanApplicationPage() {
 
     try {
       if (!currentId) {
-        // Must initialize draft first
+        
         if (!formData.bank_name) {
           setErrorMsg('Please select a Partner Lender bank on Step 1 before uploading files');
           return;
@@ -315,7 +315,7 @@ export default function LoanApplicationPage() {
         setDraftId(currentId);
       }
 
-      setUploadingDocs((prev) => ({ ...prev, [docType]: 5 })); // show starting spinner
+      setUploadingDocs((prev) => ({ ...prev, [docType]: 5 })); 
 
       const uploadRes = await loanApi.uploadDocument(currentId, docType, file, (progressEvent) => {
         const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -355,7 +355,7 @@ export default function LoanApplicationPage() {
     }
   };
 
-  // Final Submit
+  
   const handleSubmitApplication = async () => {
     const error = validateStep(7);
     if (error) {
@@ -376,7 +376,7 @@ export default function LoanApplicationPage() {
     }
   };
 
-  // Trigger PDF/Image Viewer Modal
+  
   const openPreview = (doc) => {
     if (!doc?.url) return;
     setPreviewUrl(doc.url);
@@ -384,7 +384,7 @@ export default function LoanApplicationPage() {
     setPreviewType(doc.mimetype);
   };
 
-  // Drag and Drop Zone Component
+  
   const DropZone = ({ docType, label }) => {
     const [dragging, setDragging] = useState(false);
     const existingFile = uploadedDocs[docType];
@@ -562,16 +562,16 @@ export default function LoanApplicationPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between relative overflow-hidden">
-      {/* Background radial highlight */}
+      {}
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-600/5 rounded-full blur-3xl" />
       </div>
 
-      {/* Main Form container */}
+      {}
       <div className="flex-1 w-full max-w-5xl mx-auto px-4 py-6 sm:py-8 flex flex-col justify-center relative z-10">
         
-        {/* Header toolbar */}
+        {}
         <div className="flex items-center justify-between mb-5">
           <button
             onClick={async () => {
@@ -584,7 +584,7 @@ export default function LoanApplicationPage() {
             Back to Dashboard
           </button>
 
-          {/* Autosave status indicator */}
+          {}
           <div className="flex items-center gap-2 text-xs text-slate-400">
             {autoSaveStatus && (
               <span className="flex items-center gap-1 text-[10px] text-blue-400">
@@ -602,7 +602,7 @@ export default function LoanApplicationPage() {
           </div>
         </div>
 
-        {/* Stepper Progress Bar */}
+        {}
         <div className="mb-6 space-y-2">
           <div className="flex justify-between items-center text-[10px] font-bold text-slate-300 uppercase tracking-widest">
             <span>Step {currentStep} of 8: {
@@ -620,10 +620,10 @@ export default function LoanApplicationPage() {
           <Progress value={(currentStep / 8) * 100} className="h-1.5" />
         </div>
 
-        {/* Card Frame */}
+        {}
         <div className="bg-slate-900/60 backdrop-blur-xl border border-white/5 rounded-3xl overflow-hidden shadow-2xl grid md:grid-cols-4 min-h-[500px]">
           
-          {/* Main stepper form area */}
+          {}
           <div className="md:col-span-3 p-6 sm:p-8 space-y-6 flex flex-col justify-between">
             <div>
               {errorMsg && (
@@ -633,7 +633,7 @@ export default function LoanApplicationPage() {
                 </div>
               )}
 
-              {/* ── STEP 1: Business Information ── */}
+              {}
               {currentStep === 1 && (
                 <div className="space-y-4 animate-fade-in">
                   <div className="flex justify-between items-center border-b border-white/5 pb-2">
@@ -665,7 +665,7 @@ export default function LoanApplicationPage() {
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-4">
-                    {/* Bank selector */}
+                    {}
                     <div className="space-y-1.5 sm:col-span-2">
                       <label className="block text-xs font-semibold text-slate-300">Lender Bank</label>
                       <select
@@ -682,7 +682,7 @@ export default function LoanApplicationPage() {
                       </select>
                     </div>
 
-                    {/* Legal Name */}
+                    {}
                     <div className="space-y-1.5">
                       <label className="block text-xs font-semibold text-slate-300">Legal Business Name</label>
                       <input
@@ -694,7 +694,7 @@ export default function LoanApplicationPage() {
                       />
                     </div>
 
-                    {/* Registration type */}
+                    {}
                     <div className="space-y-1.5">
                       <label className="block text-xs font-semibold text-slate-300">Entity Structure</label>
                       <select
@@ -710,7 +710,7 @@ export default function LoanApplicationPage() {
                       </select>
                     </div>
 
-                    {/* GSTIN */}
+                    {}
                     <div className="space-y-1.5">
                       <label className="block text-xs font-semibold text-slate-300">GSTIN Registration</label>
                       <input
@@ -723,7 +723,7 @@ export default function LoanApplicationPage() {
                       />
                     </div>
 
-                    {/* Incorporation Date */}
+                    {}
                     <div className="space-y-1.5">
                       <label className="block text-xs font-semibold text-slate-300">Incorporation Date</label>
                       <input
@@ -734,7 +734,7 @@ export default function LoanApplicationPage() {
                       />
                     </div>
 
-                    {/* Industry Sector */}
+                    {}
                     <div className="space-y-1.5 sm:col-span-2">
                       <label className="block text-xs font-semibold text-slate-300">Industry / Manufacturing Sector</label>
                       <input
@@ -749,7 +749,7 @@ export default function LoanApplicationPage() {
                 </div>
               )}
 
-              {/* ── STEP 2: Financial Information ── */}
+              {}
               {currentStep === 2 && (
                 <div className="space-y-4 animate-fade-in">
                   <div className="flex justify-between items-center border-b border-white/5 pb-2">
@@ -827,7 +827,7 @@ export default function LoanApplicationPage() {
                 </div>
               )}
 
-              {/* ── STEP 3: Loan Details ── */}
+              {}
               {currentStep === 3 && (
                 <div className="space-y-4 animate-fade-in">
                   <div className="flex justify-between items-center border-b border-white/5 pb-2">
@@ -907,7 +907,7 @@ export default function LoanApplicationPage() {
                 </div>
               )}
 
-              {/* ── STEP 4: KYC Uploads ── */}
+              {}
               {currentStep === 4 && (
                 <div className="space-y-4 animate-fade-in">
                   <div className="space-y-1">
@@ -928,7 +928,7 @@ export default function LoanApplicationPage() {
                 </div>
               )}
 
-              {/* ── STEP 5: Financial Documents ── */}
+              {}
               {currentStep === 5 && (
                 <div className="space-y-4 animate-fade-in">
                   <div className="space-y-1">
@@ -948,7 +948,7 @@ export default function LoanApplicationPage() {
                 </div>
               )}
 
-              {/* ── STEP 6: Collateral Documents ── */}
+              {}
               {currentStep === 6 && (
                 <div className="space-y-4 animate-fade-in">
                   <div className="space-y-1">
@@ -965,7 +965,7 @@ export default function LoanApplicationPage() {
                 </div>
               )}
 
-              {/* ── STEP 7: Behavioural Evaluation ── */}
+              {}
               {currentStep === 7 && (
                 <div className="space-y-4 animate-fade-in">
                   <div className="flex justify-between items-center border-b border-white/5 pb-2">
@@ -1048,7 +1048,7 @@ export default function LoanApplicationPage() {
                 </div>
               )}
 
-              {/* ── STEP 8: Review & Submit ── */}
+              {}
               {currentStep === 8 && (
                 <div className="space-y-4 animate-fade-in max-h-[60vh] overflow-y-auto pr-2">
                   <div className="space-y-1">
@@ -1060,7 +1060,7 @@ export default function LoanApplicationPage() {
                   </div>
 
                   <div className="space-y-4 text-xs">
-                    {/* Parameters Review */}
+                    {}
                     <div className="grid sm:grid-cols-2 gap-4 bg-white/[0.01] border border-white/5 rounded-2xl p-4">
                       <div>
                         <span className="text-slate-300 block">Lender Bank</span>
@@ -1080,7 +1080,7 @@ export default function LoanApplicationPage() {
                       </div>
                     </div>
 
-                    {/* Business Info Review */}
+                    {}
                     <div className="bg-white/[0.01] border border-white/5 rounded-2xl p-4 space-y-2">
                       <h4 className="text-slate-300 font-bold border-b border-white/5 pb-1">Business details</h4>
                       <div className="grid sm:grid-cols-2 gap-2">
@@ -1103,7 +1103,7 @@ export default function LoanApplicationPage() {
                       </div>
                     </div>
 
-                    {/* Financial Info Review */}
+                    {}
                     <div className="bg-white/[0.01] border border-white/5 rounded-2xl p-4 space-y-2">
                       <h4 className="text-slate-300 font-bold border-b border-white/5 pb-1">Financial metrics</h4>
                       <div className="grid sm:grid-cols-2 gap-2">
@@ -1118,7 +1118,7 @@ export default function LoanApplicationPage() {
                       </div>
                     </div>
 
-                    {/* Uploads Review */}
+                    {}
                     <div className="bg-white/[0.01] border border-white/5 rounded-2xl p-4 space-y-2">
                       <h4 className="text-slate-300 font-bold border-b border-white/5 pb-1.5">Uploaded Documents Audit</h4>
                       <div className="space-y-1.5">
@@ -1143,7 +1143,7 @@ export default function LoanApplicationPage() {
               )}
             </div>
 
-            {/* Stepper Navigation buttons */}
+            {}
             <div className="flex justify-between pt-4 border-t border-white/5">
               <button
                 onClick={handleBack}
@@ -1184,7 +1184,7 @@ export default function LoanApplicationPage() {
             </div>
           </div>
 
-          {/* Stepper Calculator / Static Guide Sidebar */}
+          {}
           <div className="md:col-span-1 bg-blue-600/5 border-t md:border-t-0 md:border-l border-white/10 p-6 flex flex-col justify-between space-y-6">
             <div className="space-y-4">
               <h3 className="font-semibold text-white flex items-center gap-2 border-b border-white/5 pb-2 text-xs">
@@ -1230,12 +1230,12 @@ export default function LoanApplicationPage() {
         </div>
       </div>
 
-      {/* PDF / Image Preview Overlay Modal */}
+      {}
       {previewUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
           <div className="relative w-full max-w-4xl bg-slate-900 border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-scale-up">
             
-            {/* Modal Header */}
+            {}
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
               <span className="text-xs font-semibold text-white truncate max-w-[80%]">{previewTitle}</span>
               <button
@@ -1250,7 +1250,7 @@ export default function LoanApplicationPage() {
               </button>
             </div>
 
-            {/* Modal Content */}
+            {}
             <div className="p-4 bg-slate-950/50 flex justify-center">
               {previewType.includes('pdf') ? (
                 <iframe src={previewUrl} className="w-full h-[70vh] rounded-xl border border-white/5" title="PDF preview frame" />

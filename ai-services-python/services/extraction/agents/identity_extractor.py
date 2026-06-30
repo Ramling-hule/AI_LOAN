@@ -62,7 +62,7 @@ async def extract(
 
     context = _format_chunks_as_context(chunks)
 
-    # Build the "known values" hint from regex pre-extraction
+    
     known_lines = []
     for field in _FIELDS:
         match = known_values.get(field)
@@ -89,12 +89,12 @@ async def extract(
         domain="identity",
     )
 
-    # Override with regex results where regex has higher confidence
+    
     for field in ["gstin", "pan", "cin", "llpin"]:
         regex_match = known_values.get(field)
         if regex_match and regex_match.value:
             llm_field = result.get(field)
-            # Regex wins if LLM returned null OR regex confidence > LLM confidence
+            
             if llm_field is None or llm_field.value is None or regex_match.confidence > (llm_field.confidence or 0):
                 result[field] = ExtractedField(
                     value=regex_match.value,

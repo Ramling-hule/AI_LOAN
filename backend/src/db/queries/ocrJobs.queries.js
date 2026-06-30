@@ -1,10 +1,10 @@
 import supabase from '../supabaseClient.js';
 import { v4 as uuidv4 } from 'uuid';
 
-// ---------------------------------------------------------------------------
-// ocrJobs.queries.js
-// Supabase operations for the ocr_jobs table.
-// ---------------------------------------------------------------------------
+
+
+
+
 
 export const createOcrJob = async ({
   jobId, status = 'queued', document_name, document_url, file_size,
@@ -44,7 +44,7 @@ export const findOcrJobById = async (jobId) => {
     .eq('id', jobId)
     .single();
 
-  if (error && error.code !== 'PGRST116') throw error; // Ignore not found error
+  if (error && error.code !== 'PGRST116') throw error; 
   return data || null;
 };
 
@@ -101,7 +101,7 @@ export const updateOcrJobStatus = async (jobId, updates) => {
 };
 
 export const appendOcrJobLog = async (jobId, logEntry) => {
-  // Fetch current logs
+  
   const job = await findOcrJobById(jobId);
   if (!job) return;
 

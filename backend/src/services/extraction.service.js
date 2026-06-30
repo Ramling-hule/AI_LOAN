@@ -7,15 +7,15 @@ import logger from '../utils/logger.js';
 import env from '../config/env.js';
 import EmailService from './email.service.js';
 
-// ---------------------------------------------------------------------------
-// Extraction Service (Backend) — PostgreSQL version
-// Acts as a proxy + orchestrator between the backend and ai-services
-// (now Python FastAPI). All Mongoose calls replaced with SQL queries.
-// ---------------------------------------------------------------------------
+
+
+
+
+
 
 const aiClient = axios.create({
   baseURL: env.AI_SERVICE_URL,
-  timeout: 600_000,  // 10 min — LLM inference can be slow
+  timeout: 600_000,  
   headers: { 'Content-Type': 'application/json' },
 });
 

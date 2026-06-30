@@ -16,10 +16,10 @@ import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import { setSession, getSession, deleteSession, blacklistToken, isTokenBlacklisted } from '../config/redis.js';
 
-// ---------------------------------------------------------------------------
-// Auth Service — PostgreSQL version
-// All MongoDB/Mongoose calls replaced with SQL query functions.
-// ---------------------------------------------------------------------------
+
+
+
+
 
 const sendMfaOtp = async (userId, email) => {
   const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -29,7 +29,7 @@ const sendMfaOtp = async (userId, email) => {
   return code;
 };
 
-// ── SME Auth ──────────────────────────────────────────────────────────────────
+
 
 export const registerSME = async (data, _ipAddress, _userAgent) => {
   const { full_name, business_name, phone, email, password, address } = data;
@@ -53,7 +53,7 @@ export const registerSME = async (data, _ipAddress, _userAgent) => {
 };
 
 export const loginSME = async ({ email, password }) => {
-  const user = await findSMEByEmail(email, true); // true = include password_hash
+  const user = await findSMEByEmail(email, true); 
   if (!user) throw ApiError.unauthorized('Invalid email or password');
   if (!user.is_active) throw ApiError.forbidden('Your account has been deactivated. Contact support.');
 
@@ -67,7 +67,7 @@ export const loginSME = async ({ email, password }) => {
   return { mfaRequired: true, tempToken };
 };
 
-// ── Bank Admin Auth ───────────────────────────────────────────────────────────
+
 
 export const registerBankAdmin = async (data) => {
   const { bank_name, branch_name, branch_address, ifsc_code, admin_name, email, phone, password } = data;
@@ -105,7 +105,7 @@ export const loginBankAdmin = async ({ email, password }) => {
   return { mfaRequired: true, tempToken };
 };
 
-// ── MFA Verification ──────────────────────────────────────────────────────────
+
 
 export const verifyMfaOTP = async (tempToken, code, ipAddress, userAgent) => {
   if (!tempToken || !code) throw ApiError.badRequest('MFA token and verification code are required');
@@ -142,7 +142,7 @@ export const verifyMfaOTP = async (tempToken, code, ipAddress, userAgent) => {
 
   if (!user || !user.is_active) throw ApiError.unauthorized('User not found or account is inactive');
 
-  // Update last login
+  
   if (role === 'sme') await updateSMELastLogin(id);
   else await updateBankAdminLastLogin(id);
 
@@ -157,7 +157,7 @@ export const verifyMfaOTP = async (tempToken, code, ipAddress, userAgent) => {
   return { user: sanitizeUser(user, role), accessToken, refreshToken };
 };
 
-// ── Refresh Token ─────────────────────────────────────────────────────────────
+
 
 export const refreshAccessToken = async (refreshToken, ipAddress, userAgent) => {
   if (!refreshToken) throw ApiError.unauthorized('Refresh token is required');
@@ -193,7 +193,7 @@ export const refreshAccessToken = async (refreshToken, ipAddress, userAgent) => 
   return { accessToken: newAccessToken, refreshToken: newRefreshToken };
 };
 
-// ── Logout ────────────────────────────────────────────────────────────────────
+
 
 export const logout = async (accessTokenPayload) => {
   if (accessTokenPayload?.sessionId) {

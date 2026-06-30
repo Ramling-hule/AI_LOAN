@@ -1,11 +1,11 @@
 import { useState, useCallback } from 'react';
 
-// ---------------------------------------------------------------------------
-// useApi — generic hook for async API calls with loading/error state.
-// Usage:
-//   const { execute, data, isLoading, error } = useApi(loanApi.getAll);
-//   const handleFetch = () => execute({ page: 1 });
-// ---------------------------------------------------------------------------
+
+
+
+
+
+
 
 export function useApi(apiFn) {
   const [data, setData] = useState(null);

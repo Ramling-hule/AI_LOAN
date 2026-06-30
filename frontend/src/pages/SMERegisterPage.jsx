@@ -18,9 +18,9 @@ import {
 
 import { useAuth } from '@/context/AuthContext.jsx';
 
-// ---------------------------------------------------------------------------
-// SME Register Page
-// ---------------------------------------------------------------------------
+
+
+
 
 const PasswordStrength = ({ password = '' }) => {
   const checks = [
@@ -104,16 +104,16 @@ export default function SMERegisterPage() {
   if (mfaRequired) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 flex items-center justify-center p-4">
-        {/* Background decoration */}
+        {}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
           <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" />
         </div>
 
         <div className="relative w-full max-w-md">
-          {/* Card */}
+          {}
           <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-            {/* Header */}
+            {}
             <div className="text-center mb-8">
               <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-500/20 border border-blue-500/30 mb-4">
                 <Lock className="w-7 h-7 text-blue-400" />
@@ -122,7 +122,7 @@ export default function SMERegisterPage() {
               <p className="text-slate-400 text-sm">Please enter the 6-digit OTP code sent to your email</p>
             </div>
 
-            {/* OTP error */}
+            {}
             {otpError && (
               <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6">
                 <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
@@ -130,7 +130,7 @@ export default function SMERegisterPage() {
               </div>
             )}
 
-            {/* Form */}
+            {}
             <form onSubmit={handleVerifyOtp} className="space-y-5">
               <div className="space-y-1.5">
                 <label htmlFor="otp-code" className="block text-sm font-medium text-slate-300">
@@ -191,7 +191,7 @@ export default function SMERegisterPage() {
 
       <div className="relative w-full max-w-lg">
         <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-          {/* Header */}
+          {}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-500/20 border border-blue-500/30 mb-4">
               <Building2 className="w-7 h-7 text-blue-400" />
@@ -200,7 +200,7 @@ export default function SMERegisterPage() {
             <p className="text-slate-400 text-sm">Start your loan application journey</p>
           </div>
 
-          {/* Server error */}
+          {}
           {serverError && (
             <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6">
               <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
@@ -209,7 +209,7 @@ export default function SMERegisterPage() {
           )}
 
           <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
-            {/* Full Name + Business Name */}
+            {}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label htmlFor="reg-full-name" className="block text-sm font-medium text-slate-300">
@@ -246,7 +246,7 @@ export default function SMERegisterPage() {
               </div>
             </div>
 
-            {/* Phone */}
+            {}
             <div className="space-y-1.5">
               <label htmlFor="reg-phone" className="block text-sm font-medium text-slate-300">
                 Phone Number
@@ -267,7 +267,7 @@ export default function SMERegisterPage() {
               {errors.phone && <p className="text-red-400 text-xs">{errors.phone.message}</p>}
             </div>
 
-            {/* Email */}
+            {}
             <div className="space-y-1.5">
               <label htmlFor="reg-email" className="block text-sm font-medium text-slate-300">
                 Email Address
@@ -288,7 +288,7 @@ export default function SMERegisterPage() {
               {errors.email && <p className="text-red-400 text-xs">{errors.email.message}</p>}
             </div>
 
-            {/* Password */}
+            {}
             <div className="space-y-1.5">
               <label htmlFor="reg-password" className="block text-sm font-medium text-slate-300">
                 Password
@@ -323,7 +323,7 @@ export default function SMERegisterPage() {
               <PasswordStrength password={password} />
             </div>
 
-            {/* Submit */}
+            {}
             <button
               id="sme-register-btn"
               type="submit"

@@ -11,17 +11,17 @@ module.exports = {
   extends: ['eslint:recommended', 'plugin:import/recommended'],
   plugins: ['import'],
   rules: {
-    // Possible errors
+    
     'no-console': 'warn',
     'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
 
-    // Best practices
+    
     eqeqeq: ['error', 'always'],
     curly: 'error',
     'no-var': 'error',
     'prefer-const': 'error',
 
-    // Import ordering
+    
     'import/order': [
       'warn',
       {

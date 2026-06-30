@@ -20,13 +20,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config.settings import get_settings
 from config.database import init_db, close_db
-from services.llm.azure_openai import ping as ping_llm
+from services.llm.llm_facade import ping as ping_llm
 from services.ocr.ocr_queue import start_worker, stop_worker
-from routers import ocr, extraction, underwriting, chat
+from services.processing_queue import processing_queue
+from routers import ocr, extraction, underwriting, chat, queue, embed
 
 settings = get_settings()
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+
 logger.remove()
 logger.add(
     sys.stdout,
@@ -43,39 +44,43 @@ logger.add(
 )
 
 
-# ── Lifespan (startup + shutdown hooks) ────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info(f"🚀  Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     logger.info("=" * 60)
 
-    # 1. PostgreSQL
+    
     try:
         await init_db()
     except Exception as e:
         logger.critical(f"❌  PostgreSQL initialization failed: {e}")
         raise
 
-    # 2. Google Gemini
+    
     llm_ok = await ping_llm()
     if not llm_ok:
         logger.warning("⚠️  Google Gemini API is unreachable — LLM features will fail until connectivity is restored.")
 
-    # 3. OCR Worker
+    
     await start_worker()
+
+    
+    await processing_queue.start()
 
     logger.info("✅  All services initialized. AI Service is ready.")
     yield
 
-    # Shutdown
+    
     logger.info("🛑  Shutting down...")
+    await processing_queue.stop()
     await stop_worker()
     await close_db()
     logger.info("🛑  Shutdown complete.")
 
 
-# ── FastAPI App ────────────────────────────────────────────────────────────────
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -85,7 +90,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.BACKEND_URL, "http://localhost:5000", "http://localhost:3000"],
@@ -93,14 +98,16 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "x-internal-secret"],
 )
 
-# ── Routers ───────────────────────────────────────────────────────────────────
+
 app.include_router(ocr.router)
 app.include_router(extraction.router)
 app.include_router(underwriting.router)
 app.include_router(chat.router)
+app.include_router(queue.router)
+app.include_router(embed.router)
 
 
-# ── Health & Status Endpoints ─────────────────────────────────────────────────
+
 @app.get("/", tags=["Health"])
 async def root():
     return {
@@ -142,7 +149,7 @@ async def health():
     }
 
 
-# ── Uvicorn Entry Point ───────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
@@ -150,6 +157,6 @@ if __name__ == "__main__":
         host=settings.HOST,
         port=settings.PORT,
         reload=settings.DEBUG,
-        workers=1,  # Keep at 1 — the OCR queue is in-process
+        workers=1,  
         log_level=settings.LOG_LEVEL.lower(),
     )

@@ -57,7 +57,7 @@ async def get_job_status(job_id: str):
     """Get OCR job status from PostgreSQL."""
     row = await fetchrow("SELECT * FROM ocr_jobs WHERE id = $1", job_id)
     if not row:
-        # Fallback to in-memory state
+        
         state = get_job_state(job_id)
         if not state:
             raise HTTPException(status_code=404, detail="OCR job not found")
@@ -79,5 +79,5 @@ async def retry_job(job_id: str):
         job_id,
     )
 
-    # Re-submit the job (file bytes are no longer available — mark for manual re-upload)
+    
     return {"success": True, "message": f"Job {job_id} re-queued for retry"}

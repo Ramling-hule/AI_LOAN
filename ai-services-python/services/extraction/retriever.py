@@ -15,13 +15,17 @@ import asyncio
 from loguru import logger
 
 from config.settings import get_settings
-from services.llm.azure_openai import embed_batch
-from services.vectordb.pgvector_service import query_similar_chunks
+from services.llm.llm_facade import embed_batch
+from services.vectordb.pgvector_service import (
+    query_keyword_chunks,
+    query_similar_chunks,
+    query_structured_fact_chunks,
+)
 
 settings = get_settings()
 
-# ── Domain query definitions ──────────────────────────────────────────────────
-# Multiple queries per domain maximise recall across different phrasings.
+
+
 
 DOMAIN_QUERIES: dict[str, list[str]] = {
     "identity": [
@@ -58,8 +62,35 @@ DOMAIN_QUERIES: dict[str, list[str]] = {
     ],
 }
 
+DOMAIN_DOCUMENT_TYPES: dict[str, list[str]] = {
+    "identity": ["id_document", "itr", "gst_certificate", "pan", "aadhaar", "general"],
+    "financial": ["balance_sheets", "itr", "profit_loss", "general"],
+    "bank": ["bank_statements", "general"],
+    "loan": ["general", "loan_documents", "balance_sheets", "bank_statements"],
+    "promoter": ["id_document", "general"],
+    "collateral": ["general"],
+}
 
-# ── Domain-aware chunk dict ───────────────────────────────────────────────────
+DOMAIN_KEYWORDS: dict[str, list[str]] = {
+    "identity": ["GSTIN", "PAN", "CIN", "LLPIN", "registration", "permanent account"],
+    "financial": ["turnover", "revenue", "net profit", "liabilities", "balance sheet", "profit and loss"],
+    "bank": ["average monthly balance", "opening balance", "closing balance", "debit", "credit", "cheque bounce"],
+    "loan": ["loan amount", "outstanding", "EMI", "installment", "sanction", "overdraft"],
+    "promoter": ["promoter", "director", "shareholder", "partner", "DIN", "ownership"],
+    "collateral": ["collateral", "security", "mortgage", "market value", "appraised value", "valuation"],
+}
+
+DOMAIN_FACT_KEYS: dict[str, list[str]] = {
+    "identity": ["pan", "gstin", "aadhaar_hint", "document_number_hint", "name"],
+    "financial": ["revenue", "net_profit", "total_liabilities", "total_assets", "gross_income"],
+    "bank": ["account_holder", "statement_period", "opening_balance", "closing_balance", "account_number_hint"],
+    "loan": ["loan_amount", "emi", "tenure", "interest_rate"],
+    "promoter": ["name", "pan"],
+    "collateral": ["property_address", "appraised_value", "valuation_date"],
+}
+
+
+
 
 def _tag_domain(chunks: list[dict], domain: str) -> list[dict]:
     """Add a 'domain' key to each chunk for downstream traceability."""
@@ -68,7 +99,45 @@ def _tag_domain(chunks: list[dict], domain: str) -> list[dict]:
     return chunks
 
 
-# ── Per-domain retrieval ──────────────────────────────────────────────────────
+def _dedupe_key(chunk: dict) -> str:
+    metadata = chunk.get("metadata") or {}
+    source = metadata.get("job_id") or chunk.get("document_name", "")
+    chunk_index = metadata.get("chunk_index")
+    if chunk_index is not None:
+        return f"{source}:{chunk_index}"
+    return chunk.get("text", "").strip()
+
+
+def _merge_candidate_results(results_nested: list[list[dict]]) -> list[dict]:
+    """Merge vector, keyword, and structured-fact candidates."""
+    seen: dict[str, dict] = {}
+    for result in results_nested:
+        for chunk in result:
+            text = chunk.get("text", "").strip()
+            if not text or len(text) < 20:
+                continue
+
+            key = _dedupe_key(chunk)
+            source = chunk.get("retrieval_source", "unknown")
+            existing = seen.get(key)
+
+            if not existing:
+                chunk["retrieval_sources"] = [source]
+                seen[key] = chunk
+                continue
+
+            sources = set(existing.get("retrieval_sources", []))
+            sources.add(source)
+            existing["retrieval_sources"] = sorted(sources)
+            existing["score"] = max(existing.get("score", 0.0), chunk.get("score", 0.0))
+
+            if len(chunk.get("text", "")) > len(existing.get("text", "")):
+                existing["text"] = chunk["text"]
+
+    return list(seen.values())
+
+
+
 
 async def retrieve_domain(
     domain: str,
@@ -88,62 +157,88 @@ async def retrieve_domain(
     Returns:
         List of unique chunk dicts, sorted by descending cosine score.
     """
-    # Embed all queries in a single batch call
+    
     try:
-        embeddings = await embed_batch(queries)
+        embeddings = await embed_batch(queries, use_last_key=True)
     except Exception as e:
-        logger.error(f"[Retriever] embed_batch failed for domain={domain}: {e}")
-        return []
+        logger.error(f"[Retriever] Failed to embed queries for domain={domain}: {e}")
+        embeddings = []
 
-    # Run all pgvector searches in parallel; retrieve more than candidate_k
-    # per individual query so dedup doesn't starve the pool.
+    document_types = DOMAIN_DOCUMENT_TYPES.get(domain)
+
+    
+    
     per_query_limit = max(20, candidate_k // len(queries) + 10)
 
     async def _search(vec: list[float]) -> list[dict]:
         try:
-            return await query_similar_chunks(vec, application_id, limit=per_query_limit)
+            return await query_similar_chunks(
+                vec,
+                application_id,
+                limit=per_query_limit,
+                document_types=document_types,
+            )
         except Exception as exc:
             logger.warning(f"[Retriever] pgvector query failed for domain={domain}: {exc}")
             return []
 
-    results_nested = await asyncio.gather(*[_search(vec) for vec in embeddings])
+    async def _keyword_search() -> list[dict]:
+        try:
+            return await query_keyword_chunks(
+                application_id=application_id,
+                keywords=DOMAIN_KEYWORDS.get(domain, []),
+                limit=candidate_k,
+                document_types=document_types,
+            )
+        except Exception as exc:
+            logger.warning(f"[Retriever] keyword query failed for domain={domain}: {exc}")
+            return []
 
-    # Deduplicate by text; keep the chunk with the best cosine score
-    seen: dict[str, dict] = {}
-    for result in results_nested:
-        for chunk in result:
-            text = chunk.get("text", "").strip()
-            if not text or len(text) < 20:
-                continue
-            existing = seen.get(text)
-            if not existing or existing["score"] < chunk["score"]:
-                seen[text] = chunk
+    async def _fact_search() -> list[dict]:
+        try:
+            return await query_structured_fact_chunks(
+                application_id=application_id,
+                fact_keys=DOMAIN_FACT_KEYS.get(domain, []),
+                limit=candidate_k,
+                document_types=document_types,
+            )
+        except Exception as exc:
+            logger.warning(f"[Retriever] structured-fact query failed for domain={domain}: {exc}")
+            return []
 
-    ranked = sorted(seen.values(), key=lambda c: c["score"], reverse=True)[:candidate_k]
+    results_nested = await asyncio.gather(
+        *[_search(vec) for vec in embeddings],
+        _keyword_search(),
+        _fact_search(),
+    )
+
+    ranked = sorted(
+        _merge_candidate_results(results_nested),
+        key=lambda c: c["score"],
+        reverse=True,
+    )[:candidate_k]
     _tag_domain(ranked, domain)
 
     logger.info(
-        f"[Retriever] domain={domain:12s} → {len(ranked):3d} unique chunks "
+        f"[Retriever] domain={domain:12s} -> {len(ranked):3d} unique chunks "
         f"(score {ranked[-1]['score']:.3f}–{ranked[0]['score']:.3f})"
         if ranked else
-        f"[Retriever] domain={domain:12s} → 0 chunks found"
+        f"[Retriever] domain={domain:12s} -> 0 chunks found"
     )
     return ranked
 
 
-# ── Main entrypoint ───────────────────────────────────────────────────────────
+
 
 async def retrieve_all_domains(
     application_id: str,
     candidate_k: int | None = None,
 ) -> dict[str, list[dict]]:
     """
-    Run retrieval for all 6 domains concurrently.
+    Run retrieval for all 6 domains concurrently or sequentially.
 
     Returns:
-        dict mapping domain_name → list[chunk_dict]
-        Each chunk has keys: text, score, document_type, document_name,
-                              page_number, metadata, domain
+        dict mapping domain_name -> list[chunk_dict]
     """
     candidate_k = candidate_k or settings.EXTRACTION_TOP_K_CANDIDATE
 
@@ -152,8 +247,17 @@ async def retrieve_all_domains(
         for domain, queries in DOMAIN_QUERIES.items()
     }
 
-    # Run all 6 domains in parallel
-    domain_results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    if settings.ENABLE_PARALLEL_EXECUTION:
+        domain_results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    else:
+        domain_results = []
+        for task in tasks.values():
+            try:
+                res = await task
+                domain_results.append(res)
+            except Exception as e:
+                domain_results.append(e)
+
     domain_chunks: dict[str, list[dict]] = {}
 
     for domain, result in zip(tasks.keys(), domain_results):
@@ -179,7 +283,7 @@ async def retrieve_targeted(
 
     Returns a flat, deduplicated list of chunks.
     """
-    # Map field names to domains
+    
     field_domain_map = {
         "gstin": "identity", "pan": "identity",
         "cin": "identity", "llpin": "identity",
@@ -191,7 +295,7 @@ async def retrieve_targeted(
         "collateral_details": "collateral",
     }
 
-    # Collect unique domains for the missing fields
+    
     domains_needed: set[str] = set()
     for f in fields:
         d = field_domain_map.get(f)
@@ -203,13 +307,23 @@ async def retrieve_targeted(
 
     logger.info(f"[Retriever] Second-pass domains: {domains_needed} for fields: {fields}")
 
-    tasks = [
-        retrieve_domain(d, DOMAIN_QUERIES[d], application_id, candidate_k)
+    tasks = {
+        d: retrieve_domain(d, DOMAIN_QUERIES[d], application_id, candidate_k)
         for d in domains_needed
-    ]
-    results_nested = await asyncio.gather(*tasks, return_exceptions=True)
+    }
+    
+    if settings.ENABLE_PARALLEL_EXECUTION:
+        results_nested = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    else:
+        results_nested = []
+        for task in tasks.values():
+            try:
+                res = await task
+                results_nested.append(res)
+            except Exception as e:
+                results_nested.append(e)
 
-    # Merge and deduplicate
+    
     seen: dict[str, dict] = {}
     for result in results_nested:
         if isinstance(result, Exception):

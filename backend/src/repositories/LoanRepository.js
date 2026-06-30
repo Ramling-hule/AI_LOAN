@@ -28,4 +28,4 @@ class LoanRepository {
   }
 }
 
-export default new LoanRepository(); // Export singleton
+export default new LoanRepository(); 
