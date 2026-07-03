@@ -171,3 +171,27 @@ export const getRolePermissions = async (roleId) => {
   if (error) throw error;
   return data.map(r => r.permissions.name);
 };
+
+/**
+ * Returns one representative record per distinct bank_name from
+ * bank_admin_users (picking the earliest registered admin to anchor
+ * branch/ifsc metadata).  Only active, non-deleted admins are included.
+ */
+export const getRegisteredBanks = async () => {
+  const { data, error } = await supabase
+    .from('bank_admin_users')
+    .select('id, bank_name, branch_name, ifsc_code')
+    .eq('is_deleted', false)
+    .eq('is_active', true)
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+
+  // De-duplicate: keep first occurrence of each bank_name
+  const seen = new Set();
+  return (data || []).filter(row => {
+    if (seen.has(row.bank_name)) return false;
+    seen.add(row.bank_name);
+    return true;
+  });
+};

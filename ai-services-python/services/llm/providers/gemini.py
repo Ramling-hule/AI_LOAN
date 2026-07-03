@@ -192,6 +192,9 @@ class GeminiLLMProvider(LLMProvider):
 
         model_name = model or settings.GEMINI_MODEL
         
+        if not contents:
+            contents.append({"role": "user", "parts": ["Analyze and provide the response according to the instruction."] })
+        
         if response_format == "json_object":
             strict_json_prompt = "\n\nCRITICAL: Return ONLY a valid JSON object. Do not wrap the response in ```json markdown code blocks. Do not include any conversational text."
             if system_instruction:

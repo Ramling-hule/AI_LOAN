@@ -13,7 +13,7 @@ class OcrService {
     this.loanRepo = loanRepo;
   }
 
-  async submitJob({ fileBuffer, filename, mimeType, fileSize, submittedBy, submittedByName, applicationId, documentType, documentUrl }) {
+  async submitJob({ fileBuffer, filename, mimeType, fileSize, submittedBy, submittedByName, applicationId, documentType, documentUrl, extractOnly }) {
     const job = await this.ocrRepo.createJob({
       document_name: filename,
       document_url: documentUrl || null,
@@ -32,6 +32,7 @@ class OcrService {
       formData.append('application_id', applicationId || '');
       formData.append('document_type', documentType || 'general');
       formData.append('document_url', documentUrl || '');
+      if (extractOnly) formData.append('extract_only', 'true');
 
       await this.aiClient.processOcr(formData);
       logger.info(`[OCR] Job ${job.job_id} submitted to Python AI service`);

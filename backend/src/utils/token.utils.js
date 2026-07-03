@@ -80,6 +80,9 @@ export const buildTokenPayload = (user, type) => ({
   email: user.email,
   role: type,
   role_id: user.role_id,
+  bank_name: user.bank_name,
+  admin_name: user.admin_name,
+  business_name: user.business_name,
 });
 
 

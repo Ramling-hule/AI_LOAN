@@ -3,7 +3,7 @@ FastAPI router for underwriting endpoints.
 Replaces underwriting.routes.js + underwriting.controller.js.
 """
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from loguru import logger
 from services.processing_queue import processing_queue
 
@@ -16,6 +16,17 @@ class AssessBody(BaseModel):
     requested_amount: float = 0.0
     bank_name: str = ""
     policies: list = []
+
+    @field_validator("application_id", "loan_id", "bank_name")
+    @classmethod
+    def _not_blank(cls, v: str, info):
+        # An empty bank_name silently leads to a "no active rules found"
+        # assessment downstream instead of a clear 400 — fail fast here.
+        if info.field_name == "bank_name" and not v.strip():
+            raise ValueError("bank_name must not be empty")
+        if info.field_name in {"application_id", "loan_id"} and not v.strip():
+            raise ValueError(f"{info.field_name} must not be empty")
+        return v
 
 
 @router.post("/assess")

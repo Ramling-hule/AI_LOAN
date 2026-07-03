@@ -15,6 +15,7 @@ import logger from '../utils/logger.js';
 import { recordAuditLog } from '../db/queries/auditLogs.queries.js';
 import axios from 'axios';
 import OcrService from '../services/ocr.service.js';
+import { redisClient } from '../config/redis.js';
 
 
 const AI_SERVICES_URL = process.env.AI_SERVICES_URL || 'http://localhost:8000';
@@ -65,9 +66,14 @@ const deleteFromCloudinary = (publicId) => {
 
 
 
-export const getPolicies = asyncHandler(async (req, res) => {
-  const bankName = req.user.bank_name;
+import { findBankAdminById } from '../db/queries/users.queries.js';
 
+export const getPolicies = asyncHandler(async (req, res) => {
+  let bankName = req.user.bank_name;
+  if (!bankName && req.user.role === 'bank_admin') {
+    const admin = await findBankAdminById(req.user.id);
+    if (admin) bankName = admin.bank_name;
+  }
   
   const policies = await findPoliciesForBank(bankName);
 
@@ -96,9 +102,19 @@ export const uploadPolicy = asyncHandler(async (req, res) => {
   
   const uploadResult = await uploadToCloudinary(file.buffer, file.originalname, file.mimetype);
 
+  let bankName = req.user.bank_name;
+  let adminName = req.user.admin_name;
+  if (!bankName && req.user.role === 'bank_admin') {
+    const admin = await findBankAdminById(req.user.id);
+    if (admin) {
+      bankName = admin.bank_name;
+      adminName = admin.admin_name;
+    }
+  }
+
   
   const policyDoc = await createPolicy({
-    bank_name: req.user.bank_name,
+    bank_name: bankName,
     title: title.trim(),
     description: description ? description.trim() : '',
     filename: file.originalname,
@@ -107,7 +123,7 @@ export const uploadPolicy = asyncHandler(async (req, res) => {
     size: file.size,
     mimetype: file.mimetype,
     uploaded_by: req.user.id,
-    uploaded_by_name: req.user.admin_name,
+    uploaded_by_name: adminName,
     is_system_default: false,
   });
 
@@ -118,8 +134,8 @@ export const uploadPolicy = asyncHandler(async (req, res) => {
       mimeType: file.mimetype,
       fileSize: file.size,
       submittedBy: req.user.id,
-      submittedByName: req.user.admin_name,
-      applicationId: `BANK_${req.user.bank_name}`, 
+      submittedByName: adminName,
+      applicationId: `BANK_${bankName}`, 
       documentType: 'bank_policy',
       documentUrl: uploadResult.secure_url,
     });
@@ -151,6 +167,60 @@ export const uploadPolicy = asyncHandler(async (req, res) => {
 });
 
 
+export const extractPolicyRules = asyncHandler(async (req, res) => {
+  const policy = await findPolicyById(req.params.id);
+  if (!policy) throw new ApiError(404, 'Policy not found');
+
+  let bankName = req.user.bank_name;
+  let adminName = req.user.admin_name;
+  if (!bankName && req.user.role === 'bank_admin') {
+    const admin = await findBankAdminById(req.user.id);
+    if (admin) {
+      bankName = admin.bank_name;
+      adminName = admin.admin_name;
+    }
+  }
+
+  // Fetch the PDF from Cloudinary to send to the OCR service
+  const response = await axios.get(policy.url, { responseType: 'arraybuffer' });
+  const fileBuffer = Buffer.from(response.data);
+
+  const job = await OcrService.submitJob({
+    fileBuffer,
+    filename: policy.filename,
+    mimeType: policy.mimetype,
+    fileSize: policy.size,
+    submittedBy: req.user.id,
+    submittedByName: adminName,
+    applicationId: `BANK_${bankName}`, 
+    documentType: 'bank_policy',
+    documentUrl: policy.url,
+    extractOnly: true,
+  });
+
+  if (job && job.job_id) {
+    await updatePolicyInDb(policy.id || policy._id, { ocr_job_id: job.job_id });
+    logger.info(`[BankPolicy] Successfully re-queued policy ${policy.id} for extraction (Job: ${job.job_id})`);
+  }
+
+  recordAuditLog({
+    actor_id: req.user.id,
+    actor_email: req.user.email,
+    action: 'EXTRACT_POLICY_RULES',
+    resource_model: 'Policy',
+    resource_id: policy.id || policy._id,
+    method: 'POST',
+    resource_path: `/api/v1/bank-policies/${policy.id || policy._id}/extract`,
+    status: 'success',
+    status_code: 200,
+    ip_address: req.ip,
+    user_agent: req.headers['user-agent']
+  });
+
+  return ApiResponse.ok({ job_id: job?.job_id }, 'Extraction job submitted').send(res);
+});
+
+
 export const deletePolicy = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -176,7 +246,18 @@ export const deletePolicy = asyncHandler(async (req, res) => {
   }
 
   
-  await deletePolicyFromDb(id);
+  await deletePolicyFromDb(id, policy.bank_name);
+
+  if (redisClient) {
+    try {
+      const keys = await redisClient.keys(`${policy.bank_name}:*`);
+      if (keys && keys.length > 0) {
+        await redisClient.del(...keys);
+      }
+    } catch (err) {
+      logger.error('Failed to clear Python policy cache from Redis:', err);
+    }
+  }
 
   
   recordAuditLog({
@@ -287,3 +368,47 @@ export const updatePolicy = asyncHandler(async (req, res) => {
 
   return ApiResponse.ok(updatedPolicy, 'Confidential policy document updated successfully').send(res);
 });
+
+export const getBankPolicies = asyncHandler(async (req, res) => {
+  const { bankName } = req.params;
+  const policies = await findPoliciesForBank(bankName);
+  return ApiResponse.ok(policies, 'Bank policy documents retrieved successfully').send(res);
+});
+
+export const chatWithPolicy = asyncHandler(async (req, res) => {
+  const { bankName } = req.params;
+  const { query } = req.body;
+
+  if (!query) throw new ApiError(400, 'Query is required');
+
+  const aiClient = axios.create({
+    baseURL: process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001',
+    timeout: 30000,
+  });
+
+  try {
+    const response = await aiClient.post(`/api/v1/chat/policy/${encodeURIComponent(bankName)}`, { query });
+    return res.json(response.data);
+  } catch (error) {
+    logger.error(`[Policy Chat] Proxy error: ${error.message}`);
+    if (error.response) {
+      if (error.response.status === 429) {
+        return res.status(429).json({
+          success: false,
+          message: error.response.data?.detail?.message || 'AI Engine rate limited',
+          retry_after: error.response.data?.detail?.retry_after || 30
+        });
+      }
+      return res.status(error.response.status).json({
+        success: false,
+        message: error.response.data?.detail || error.message
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: `Failed to connect to AI chat service: ${error.message}`
+    });
+  }
+});
+
+

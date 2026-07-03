@@ -1,34 +1,84 @@
-"""
-Extraction Service — orchestrates the full parameter extraction pipeline.
-Stores results in the PostgreSQL extracted_parameters table.
-
-Key changes from v1:
-  - Reads ExtractedField objects from the orchestrator (not just raw dicts)
-  - Confidence scores now store the full provenance record (evidence, page, doc_type)
-  - _validate_and_score uses format validation + composite confidence
-  - DB storage is backward-compatible (same columns, same schema)
-"""
-from __future__ import annotations
-
+import hashlib
 import uuid
 import json
-import re
+from collections import defaultdict
 from loguru import logger
 from config.database import execute, fetchrow
 from config.settings import get_settings
-from services.extraction.types import ExtractedField, REQUIRED_FIELDS, ALL_FIELDS
-from services.extraction.llm_extractor import extract_parameters, extract_missing_fields
+from services.llm.llm_facade import chat, embed_batch
+from services.vectordb.pgvector_service import query_similar_chunks, retrieve_and_rerank
+from services.metrics.retrieval_logger import log_retrieval_metric
 
 settings = get_settings()
 
+CATEGORIES = {
+    "Financial": "Revenue, annual turnover, net profit, expenses, cash flow, average monthly balance.",
+    "Compliance": "GSTIN, PAN, CIN, LLPIN, taxes, filings, statutory compliance.",
+    "Business Profile": "Promoters, directors, business age, registration details.",
+    "Collateral": "Properties, assets, security, mortgage, pledge.",
+    "Existing Loans": "Outstanding loan balance, EMIs, liabilities, cheque bounce."
+}
 
-SECOND_PASS_FIELDS = ["gstin", "pan", "annual_turnover", "net_profit", "avg_monthly_balance"]
+CATEGORIES_KEYS = {
+    "Financial": {
+        "annual_turnover": "Annual turnover / total revenue / gross sales / gross receipts",
+        "net_profit": "Net profit after taxes / net profit / profit after tax",
+        "avg_monthly_balance": "Average monthly bank balance"
+    },
+    "Compliance": {
+        "gstin": "GST Identification Number (GSTIN) / GST registration number",
+        "pan": "PAN (Permanent Account Number)",
+        "cin": "Company Identification Number (CIN)",
+        "llpin": "LLP Identification Number (LLPIN)"
+    },
+    "Business Profile": {
+        "promoter_details": "A list of promoter/director details. Format: [{'name': 'string', 'shareholding': number, 'din': 'string'}]. If none, use empty list []."
+    },
+    "Collateral": {
+        "collateral_details": "A list of collateral/security details. Format: [{'type': 'string', 'estimated_value': number, 'location': 'string'}]. If none, use empty list []."
+    },
+    "Existing Loans": {
+        "total_liabilities": "Total outstanding loan balance / total liabilities / long term secured loans",
+        "cheque_bounce_count": "Cheque bounce / ECS return count / cheque bounce count",
+        "loan_balances": "A list of existing loans. Format: [{'bank': 'string', 'amount': number}]. If none, use empty list []."
+    }
+}
 
+# Only Semantic-type rules go through this LLM-based check. Hard/Derived
+# rules are evaluated deterministically elsewhere (hard_rule_engine /
+# derived_rule_engine) against the clean parameters this module produces —
+# sending them here too would be redundant work AND risks a contradictory
+# LLM verdict landing on the same rule_id as the deterministic one.
+# Exception and Documentation rules are handled by exception_engine and the
+# underwriting_service fallback pass respectively, not here.
+SEMANTIC_RULE_TYPE = "Semantic"
 
-_GSTIN_RE = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
-_PAN_RE    = re.compile(r"^[A-Z]{5}\d{4}[A-Z]$")
-_CIN_RE    = re.compile(r"^[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}$")
-_LLPIN_RE  = re.compile(r"^[A-Z]{3}-\d{4}$")
+RULE_CHECK_INSTRUCTIONS = """--- PART 2: BANK POLICY RULE CHECK ---
+Check whether the evidence above satisfies each of these bank policy rules.
+Do not use outside knowledge or assume anything not stated in the evidence.
+{rules_desc}
+
+For EACH rule return:
+- status: "PASS" (evidence clearly satisfies the rule), "FAIL" (evidence clearly violates it),
+  "NOT_AVAILABLE" (the evidence does not address this rule at all — do not guess),
+  or "MANUAL_REVIEW" (evidence exists but is ambiguous or conflicting and needs a human)
+- applicant_value: the specific fact/number from the evidence that was checked, or "N/A" if NOT_AVAILABLE
+- reason: must explicitly reference the applicant_value or the evidence text that drove the verdict.
+  Never write a generic reason like "meets policy" without pointing at the fact that justifies it.
+- citation: which evidence source (document name / page) the verdict is based on, or "N/A" if NOT_AVAILABLE
+- confidence: 0.0-1.0, reflecting how directly the evidence supports the verdict
+"""
+
+RULE_EVAL_JSON_FIELD = """  "rule_evaluations": [
+    {{
+      "rule_id": "string",
+      "status": "PASS|FAIL|NOT_AVAILABLE|MANUAL_REVIEW",
+      "applicant_value": "string",
+      "reason": "string",
+      "citation": "string",
+      "confidence": 0.0
+    }}
+  ]"""
 
 
 class ExtractionService:
@@ -37,327 +87,458 @@ class ExtractionService:
         self,
         application_id: str,
         loan_id: str,
+        rules: list[dict] | None = None,
         enable_second_pass: bool = True,
         force: bool = False,
     ) -> dict:
         """
-        Full extraction pipeline. Returns the structured extraction result.
-        Public API is identical to v1 — only internals changed.
-        """
-        logger.info(f"[Extraction] Starting pipeline for app={application_id}, loan={loan_id}")
+        Extracts structured underwriting parameters AND evaluates Semantic
+        policy rules in the same pass, category by category — both were
+        separately re-retrieving the same document chunks before, so this
+        cuts LLM calls roughly in half and ties every rule verdict's
+        `reason` directly to the evidence pulled for that same call.
 
-        
+        `rules` is optional so existing callers that only want parameters
+        (no policy context yet) keep working unchanged — semantic_rule_results
+        will just be empty in that case.
+        """
+        logger.info(f"[Extraction] Starting categorical pipeline for app={application_id}, loan={loan_id}")
+
+        semantic_rules = [r for r in (rules or []) if r.get("rule_type") == SEMANTIC_RULE_TYPE]
+        rules_hash = self._hash_semantic_rules(semantic_rules)
+
         if not force:
             cached = await self._get_cached_result(application_id)
-            if cached and cached.get("is_complete"):
-                logger.info(f"[Extraction] Returning cached complete result for app={application_id}")
+            if cached and cached.get("is_complete") and cached.get("semantic_rules_hash") == rules_hash:
+                logger.info(f"[Extraction] Returning cached result (params + semantic rules unchanged) for app={application_id}")
                 return self._format_result(cached)
 
-        
-        extraction = await extract_parameters(application_id)
-        raw: dict = extraction["raw"]
-        extracted_fields: dict[str, ExtractedField] = extraction.get("extracted_fields", {})
-        chunks: list[dict] = extraction["chunks"]
-        avg_score: float = extraction["avg_chunk_score"]
+        extracted_data = {}
+        confidence_scores = {}
+        semantic_rule_results: list[dict] = []
 
-        if not raw or all(v is None for v in raw.values()):
-            logger.warning(f"[Extraction] No parameters extracted for app={application_id}")
+        rules_by_category, leftover_semantic_rules = self._group_semantic_rules(semantic_rules)
 
-        
-        confidence_scores, missing_fields = self._validate_and_score(raw, extracted_fields)
-        overall_confidence = (
-            sum(c["score"] for c in confidence_scores.values())
-            / max(len(confidence_scores), 1)
-        )
+        # Embed category prompts
+        cat_embeddings = await embed_batch(list(CATEGORIES.values()))
 
-        
-        if enable_second_pass and missing_fields:
-            critical_missing = [f for f in SECOND_PASS_FIELDS if f in missing_fields]
-            if critical_missing:
-                logger.info(f"[Extraction] Manual second-pass for: {critical_missing}")
-                raw = await extract_missing_fields(application_id, raw, critical_missing)
-                confidence_scores, missing_fields = self._validate_and_score(raw, {})
-                overall_confidence = (
-                    sum(c["score"] for c in confidence_scores.values())
-                    / max(len(confidence_scores), 1)
+        for cat_name, emb in zip(CATEGORIES.keys(), cat_embeddings):
+            cat_rules = rules_by_category.get(cat_name, [])
+
+            # Use rerank-quality retrieval when this category also needs to
+            # answer rule questions — a plain top-k vector match is fine for
+            # bulk parameter extraction, but rule verdicts should be backed
+            # by the best-matching evidence, not just "close enough".
+            if cat_rules:
+                chunks = await retrieve_and_rerank(
+                    query_text=CATEGORIES[cat_name],
+                    query_embedding=emb,
+                    application_id=application_id,
+                    fetch_limit=15,
+                    final_limit=10,
                 )
+            else:
+                chunks = await query_similar_chunks(emb, application_id, limit=10)
 
-        is_complete = len(missing_fields) == 0
+            if not chunks:
+                logger.warning(f"No chunks found for category {cat_name}")
+                continue
 
-        
-        extraction_id = await self._upsert_extraction(
-            application_id=application_id,
-            loan_id=loan_id,
-            raw=raw,
-            confidence_scores=confidence_scores,
-            missing_fields=missing_fields,
-            is_complete=is_complete,
-            overall_confidence=overall_confidence,
-        )
+            context = "\n---\n".join([c["text"] for c in chunks])
+            expected_keys_desc = "\n".join([f"- '{k}': {v}" for k, v in CATEGORIES_KEYS[cat_name].items()])
 
-        result = {
-            "extraction_id": str(extraction_id),
-            "application_id": application_id,
-            "is_complete": is_complete,
-            "overall_confidence": round(overall_confidence, 4),
-            "missing_fields": missing_fields,
-            "extraction_model": f"google-gemini/{settings.GEMINI_FLASH_MODEL}+{settings.GEMINI_MODEL}",
-            "parameters": raw,
-            "confidence_scores": {k: v["score"] for k, v in confidence_scores.items()},
+            prompt = self._build_prompt(cat_name, context, expected_keys_desc, cat_rules)
+
+            messages = [{"role": "system", "content": prompt}]
+            raw = await chat(messages, response_format="json_object", max_tokens=3072)
+
+            try:
+                parsed = self._parse_json(raw)
+                extracted_data.update(parsed.get("parameters", {}))
+                confidence_scores.update(parsed.get("confidence", parsed.get("parameter_confidence", {})))
+                normalized_evals = self._normalize_rule_evaluations(parsed.get("rule_evaluations", []), cat_rules)
+                semantic_rule_results.extend(normalized_evals)
+                for eval_result in normalized_evals:
+                    if eval_result["status"] != "MANUAL_REVIEW":
+                        log_retrieval_metric(
+                            "semantic_evaluations",
+                            session_id=application_id,
+                            query=CATEGORIES[cat_name],
+                            k_value=len(chunks),
+                            retrieved_chunks=chunks,
+                            prompt=prompt,
+                            llm_raw_response=raw,
+                            parsed_result=eval_result,
+                            extra={"rule_id": eval_result["rule_id"], "rule_type": "Semantic"}
+                        )
+            except Exception as e:
+                logger.error(f"Failed to parse category extraction for {cat_name}: {e}")
+                # A category whose rule verdicts failed to parse must not
+                # silently vanish — that Semantic rule would otherwise look
+                # unevaluated with no trace of why. Mark them MANUAL_REVIEW.
+                semantic_rule_results.extend(self._parse_failure_results(cat_rules, reason=str(e)))
+
+        if leftover_semantic_rules:
+            semantic_rule_results.extend(
+                await self._evaluate_leftover_rules(application_id, leftover_semantic_rules)
+            )
+
+        # Map to database schema with comprehensive fallbacks
+        if not extracted_data:
+            logger.error(f"[Extraction] No chunks found for ANY category for app={application_id}. Aborting extraction.")
+            raise ValueError(f"No usable document text found for loan application {application_id}. Please ensure documents are uploaded and processed successfully before triggering extraction.")
+
+        def get_field(keys):
+            for k in keys:
+                if k in extracted_data:
+                    return extracted_data[k]
+                for ext_k, ext_v in extracted_data.items():
+                    if ext_k.lower().replace(" ", "_") == k.lower().replace(" ", "_"):
+                        return ext_v
+            return None
+
+        db_data = {
+            "gstin": get_field(["gstin", "GSTIN", "gst_number", "GST Identification Number", "GST Registration Number"]),
+            "pan": get_field(["pan", "PAN", "Permanent Account Number", "pan_number"]),
+            "cin": get_field(["cin", "CIN", "corporate_identity_number", "Corporate Identification Number"]),
+            "llpin": get_field(["llpin", "LLPIN", "llp_identification_number"]),
+            "annual_turnover": get_field(["annual_turnover", "Revenue", "total_revenue_turnover", "gross_sales_revenue_from_operations", "turnover"]),
+            "net_profit": get_field(["net_profit", "Profit", "net_profit_after_taxes", "profit_after_tax", "net_income"]),
+            "total_liabilities": get_field(["total_liabilities", "Existing Debt", "liabilities", "total_debt", "long_term_secured_loans"]),
+            "avg_monthly_balance": get_field(["avg_monthly_balance", "Average Balance", "average_monthly_balance"]),
+            "cheque_bounce_count": get_field(["cheque_bounce_count", "cheque_bounces", "cheque_bounce"]),
+            "loan_balances": extracted_data.get("loan_balances", []),
+            "promoter_details": extracted_data.get("promoter_details", []),
+            "collateral_details": extracted_data.get("collateral_details", [])
         }
 
-        logger.info(
-            f"[Extraction] Complete for app={application_id}. "
-            f"Fields extracted: {len([v for v in raw.values() if v is not None])}/{len(ALL_FIELDS)}. "
-            f"Confidence: {overall_confidence:.2%}. Missing: {missing_fields}"
+        missing = [k for k, v in db_data.items() if v is None or v == ""]
+        overall_confidence = sum(confidence_scores.values()) / max(len(confidence_scores), 1)
+
+        extraction_id = await self._upsert_extraction(
+            application_id, loan_id, db_data, confidence_scores, missing, len(missing) == 0,
+            semantic_rule_results, rules_hash,
         )
 
-        return result
+        return {
+            "extraction_id": str(extraction_id),
+            "application_id": application_id,
+            "is_complete": len(missing) == 0,
+            "overall_confidence": overall_confidence,
+            "missing_fields": missing,
+            "parameters": db_data,
+            "semantic_rule_results": semantic_rule_results,
+        }
 
-    
-
-    def _validate_and_score(
-        self,
-        raw: dict,
-        extracted_fields: dict[str, "ExtractedField"],
-    ) -> tuple[dict[str, dict], list[str]]:
-        """
-        Validate extracted fields and compute per-field confidence records.
-
-        Returns:
-            confidence_scores: {field: {"score": float, "evidence": ..., "page": ..., ...}}
-            missing_fields:    list of required fields that are null or invalid
-        """
-        confidence_scores: dict[str, dict] = {}
-        missing_fields: list[str] = []
-
-        def _ef(field: str) -> ExtractedField | None:
-            return extracted_fields.get(field)
-
-        def _base_record(field: str, score: float) -> dict:
-            ef = _ef(field)
-            if ef:
-                return ef.to_confidence_record() | {"score": score}
-            return {"score": score, "source": "llm", "page": None, "document_type": None,
-                    "evidence": None, "rerank_score": 0.0, "retrieval_score": 0.0}
-
-        
-        gstin = raw.get("gstin")
-        if gstin:
-            valid = bool(_GSTIN_RE.match(str(gstin)))
-            score = 0.99 if valid and _ef("gstin") and _ef("gstin").source == "regex" else \
-                    (_ef("gstin").confidence if _ef("gstin") else (0.90 if valid else 0.50))
-            confidence_scores["gstin"] = _base_record("gstin", score)
-            if not valid:
-                missing_fields.append("gstin")
+    # ------------------------------------------------------------------
+    # Prompt construction
+    # ------------------------------------------------------------------
+    def _build_prompt(self, cat_name: str, context: str, expected_keys_desc: str, cat_rules: list[dict]) -> str:
+        if cat_rules:
+            rules_desc = "\n".join(f"- [{r['rule_id']}] {r.get('description', '')}" for r in cat_rules)
+            rule_section = RULE_CHECK_INSTRUCTIONS.format(rules_desc=rules_desc)
+            rule_json_field = ",\n" + RULE_EVAL_JSON_FIELD
         else:
-            missing_fields.append("gstin")
-            confidence_scores["gstin"] = _base_record("gstin", 0.0)
+            rule_section = ""
+            rule_json_field = ""
 
-        pan = raw.get("pan")
-        if pan:
-            valid = bool(_PAN_RE.match(str(pan)))
-            score = _ef("pan").confidence if _ef("pan") else (0.90 if valid else 0.50)
-            confidence_scores["pan"] = _base_record("pan", score)
-            if not valid:
-                missing_fields.append("pan")
-        else:
-            missing_fields.append("pan")
-            confidence_scores["pan"] = _base_record("pan", 0.0)
+        return f"""Extract structured underwriting parameters{" AND check bank policy rules" if cat_rules else ""} for category: {cat_name}.
 
-        cin = raw.get("cin")
-        if cin:
-            valid = bool(_CIN_RE.match(str(cin)))
-            score = _ef("cin").confidence if _ef("cin") else (0.90 if valid else 0.50)
-            confidence_scores["cin"] = _base_record("cin", score)
-        else:
-            confidence_scores["cin"] = _base_record("cin", 0.0)
+Document Evidence:
+{context}
 
-        llpin = raw.get("llpin")
-        if llpin:
-            valid = bool(_LLPIN_RE.match(str(llpin)))
-            score = _ef("llpin").confidence if _ef("llpin") else (0.90 if valid else 0.50)
-            confidence_scores["llpin"] = _base_record("llpin", score)
-        else:
-            confidence_scores["llpin"] = _base_record("llpin", 0.0)
+--- PART 1: PARAMETER EXTRACTION ---
+You MUST return the following keys under "parameters" (use null if missing or empty list [] for list types):
+{expected_keys_desc}
 
-        
-        for field in ["annual_turnover", "net_profit", "total_liabilities", "avg_monthly_balance"]:
-            val = raw.get(field)
-            if val is not None and val != "":
-                try:
-                    float(val)
-                    score = _ef(field).confidence if _ef(field) else 0.90
-                    confidence_scores[field] = _base_record(field, score)
-                except (TypeError, ValueError):
-                    confidence_scores[field] = _base_record(field, 0.0)
-                    if field in REQUIRED_FIELDS:
-                        missing_fields.append(field)
+{rule_section}
+Return ONLY valid JSON, no markdown fences, no preamble:
+{{
+  "parameters": {{ "key1": "value1" }},
+  "confidence": {{ "key1": 0.9 }}{rule_json_field}
+}}
+"""
+
+    # ------------------------------------------------------------------
+    # Rule grouping / caching helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _group_semantic_rules(semantic_rules: list[dict]) -> tuple[dict[str, list[dict]], list[dict]]:
+        """Buckets Semantic rules by the extraction category they belong to.
+        Rules whose `category` doesn't match one of the five known
+        categories (free-text field, LLM-extracted at policy time) are
+        returned separately rather than silently dropped."""
+        known = {c.lower(): c for c in CATEGORIES}
+        by_category: dict[str, list[dict]] = defaultdict(list)
+        leftover: list[dict] = []
+        for r in semantic_rules:
+            cat = (r.get("category") or "").strip().lower()
+            matched = known.get(cat)
+            if matched:
+                by_category[matched].append(r)
             else:
-                if field in REQUIRED_FIELDS:
-                    missing_fields.append(field)
-                confidence_scores[field] = _base_record(field, 0.0)
+                leftover.append(r)
+        return dict(by_category), leftover
 
-        
-        cbc = raw.get("cheque_bounce_count")
-        if cbc is not None:
-            score = _ef("cheque_bounce_count").confidence if _ef("cheque_bounce_count") else 0.85
-            confidence_scores["cheque_bounce_count"] = _base_record("cheque_bounce_count", score)
-        else:
-            confidence_scores["cheque_bounce_count"] = _base_record("cheque_bounce_count", 0.0)
+    @staticmethod
+    def _hash_semantic_rules(semantic_rules: list[dict]) -> str:
+        """Fingerprint of the active Semantic rule set. Used to invalidate
+        the cached extraction result when the bank's policy version
+        changes the semantic rules — without this, a cache hit on
+        `is_complete` alone would keep serving stale rule verdicts even
+        after a policy update, exactly the kind of silent staleness bug
+        that bit `_load_active_rules` in underwriting_service before."""
+        fingerprint = sorted(
+            (r.get("rule_id", ""), (r.get("description") or "").strip())
+            for r in semantic_rules
+        )
+        return hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()
 
-        
-        for field in ["loan_balances", "promoter_details", "collateral_details"]:
-            val = raw.get(field)
-            ef = _ef(field)
-            if isinstance(val, list):
-                score = ef.confidence if ef else 0.80
-            else:
-                score = 0.0
-            confidence_scores[field] = _base_record(field, score)
+    # ------------------------------------------------------------------
+    # Leftover (uncategorized) semantic rules
+    # ------------------------------------------------------------------
+    async def _evaluate_leftover_rules(self, application_id: str, leftover_rules: list[dict]) -> list[dict]:
+        """One extra bounded LLM call for Semantic rules whose category
+        didn't match a known bucket — keeps total LLM calls at
+        O(known categories) + O(1) regardless of how many stray-category
+        rules a policy has, instead of O(rules)."""
+        valid_rules = [r for r in leftover_rules if r.get("description")]
+        if not valid_rules:
+            return []
 
-        return confidence_scores, missing_fields
+        combined_query = " ".join(r["description"] for r in valid_rules)[:2000]
+        embeddings = await embed_batch([combined_query])
+        chunks = await retrieve_and_rerank(
+            query_text=combined_query,
+            query_embedding=embeddings[0],
+            application_id=application_id,
+            fetch_limit=15,
+            final_limit=10,
+        )
+        if not chunks:
+            return self._parse_failure_results(valid_rules, reason="No document evidence found for these rules.")
 
-    
+        context = "\n---\n".join(c["text"] for c in chunks)
+        rules_desc = "\n".join(f"- [{r['rule_id']}] {r.get('description', '')}" for r in valid_rules)
 
+        prompt = f"""Check whether the evidence below satisfies each bank policy rule.
+Do not use outside knowledge or assume anything not stated in the evidence.
+
+Document Evidence:
+{context}
+
+Rules:
+{rules_desc}
+
+For EACH rule return status (PASS|FAIL|NOT_AVAILABLE|MANUAL_REVIEW), applicant_value, reason
+(must cite the specific fact used), citation, and confidence (0.0-1.0).
+
+Return ONLY valid JSON, no markdown fences:
+{{
+{RULE_EVAL_JSON_FIELD}
+}}"""
+
+        try:
+            raw = await chat([{"role": "system", "content": prompt}], response_format="json_object", max_tokens=2048)
+            parsed = self._parse_json(raw)
+            normalized_evals = self._normalize_rule_evaluations(parsed.get("rule_evaluations", []), valid_rules)
+            for eval_result in normalized_evals:
+                if eval_result["status"] != "MANUAL_REVIEW":
+                    log_retrieval_metric(
+                        "semantic_evaluations",
+                        session_id=application_id,
+                        query=combined_query,
+                        k_value=len(chunks),
+                        retrieved_chunks=chunks,
+                        prompt=prompt,
+                        llm_raw_response=raw,
+                        parsed_result=eval_result,
+                        extra={"rule_id": eval_result["rule_id"], "rule_type": "Semantic"}
+                    )
+            return normalized_evals
+        except Exception as e:
+            logger.error(f"Failed to evaluate leftover semantic rules: {e}")
+            return self._parse_failure_results(valid_rules, reason=str(e))
+
+    # ------------------------------------------------------------------
+    # Rule-evaluation normalization
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _normalize_rule_evaluations(raw_evals: list[dict], expected_rules: list[dict]) -> list[dict]:
+        """Fills in rule_name/rule_type from the source rule (the LLM only
+        echoes rule_id) and ensures every rule this call was asked about
+        gets an entry — even if the LLM's response silently dropped one,
+        which must surface as MANUAL_REVIEW, not disappear."""
+        by_id = {r["rule_id"]: r for r in expected_rules}
+        seen_ids = set()
+        results = []
+
+        for ev in raw_evals:
+            rule_id = ev.get("rule_id")
+            source_rule = by_id.get(rule_id, {})
+            seen_ids.add(rule_id)
+            results.append({
+                "rule_id": rule_id,
+                "rule_name": source_rule.get("description", ev.get("reason", "")),
+                "rule_type": SEMANTIC_RULE_TYPE,
+                "engine": "ExtractionService.SemanticCheck",
+                "status": ev.get("status") or "MANUAL_REVIEW",
+                "applicant_value": ev.get("applicant_value", "N/A"),
+                "reason": ev.get("reason", ""),
+                "citation": ev.get("citation", ""),
+                "confidence": ev.get("confidence", 0.5),
+            })
+
+        for rule_id, rule in by_id.items():
+            if rule_id not in seen_ids:
+                results.append({
+                    "rule_id": rule_id,
+                    "rule_name": rule.get("description", ""),
+                    "rule_type": SEMANTIC_RULE_TYPE,
+                    "engine": "ExtractionService.SemanticCheck",
+                    "status": "MANUAL_REVIEW",
+                    "applicant_value": "N/A",
+                    "reason": "Model response did not include a verdict for this rule.",
+                    "citation": "",
+                    "confidence": 0.0,
+                })
+
+        return results
+
+    @staticmethod
+    def _parse_failure_results(cat_rules: list[dict], reason: str) -> list[dict]:
+        return [
+            {
+                "rule_id": r.get("rule_id"),
+                "rule_name": r.get("description", ""),
+                "rule_type": SEMANTIC_RULE_TYPE,
+                "engine": "ExtractionService.SemanticCheck",
+                "status": "MANUAL_REVIEW",
+                "applicant_value": "N/A",
+                "reason": f"Evaluation failed and requires manual check: {reason}",
+                "citation": "",
+                "confidence": 0.0,
+            }
+            for r in cat_rules
+        ]
+
+    @staticmethod
+    def _parse_json(raw: str) -> dict:
+        clean_raw = raw.strip()
+        if clean_raw.startswith("```json"):
+            clean_raw = clean_raw[7:].rsplit("```", 1)[0].strip()
+        elif clean_raw.startswith("```"):
+            clean_raw = clean_raw[3:].rsplit("```", 1)[0].strip()
+        return json.loads(clean_raw)
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
     async def _upsert_extraction(
-        self,
-        application_id: str,
-        loan_id: str,
-        raw: dict,
-        confidence_scores: dict,
-        missing_fields: list,
-        is_complete: bool,
-        overall_confidence: float,
-    ) -> str:
-        """Upsert extraction result to extracted_parameters table (schema unchanged)."""
+        self, application_id, loan_id, raw, conf, missing, is_complete,
+        semantic_rule_results, rules_hash,
+    ):
+        # NOTE ON SCHEMA: requires two new columns on extracted_parameters —
+        #   semantic_rule_evaluations JSONB
+        #   semantic_rules_hash TEXT
+        # Migration:
+        #   ALTER TABLE extracted_parameters
+        #     ADD COLUMN semantic_rule_evaluations JSONB,
+        #     ADD COLUMN semantic_rules_hash TEXT;
+        existing = await fetchrow("SELECT id FROM extracted_parameters WHERE application_id = $1", application_id)
 
-        def clean(v, default):
-            if v is None:
-                return default
-            if isinstance(v, str):
-                try:
-                    return json.loads(v)
-                except Exception:
-                    pass
-            return v
-
-        def clean_scalar(v):
-            if isinstance(v, list):
-                return str(v[0]) if len(v) > 0 else None
-            if isinstance(v, dict):
-                return None
-            if v == "":
-                return None
-            return v
-
-        loan_balances     = clean(raw.get("loan_balances"), [])
-        promoter_details  = clean(raw.get("promoter_details"), [])
-        collateral_details= clean(raw.get("collateral_details"), [])
-        
-        confidence_json   = clean(confidence_scores, {})
-
-        existing = await fetchrow(
-            "SELECT id FROM extracted_parameters WHERE application_id = $1",
-            application_id,
-        )
+        import re
+        def clean_str(v): return None if v in (None, "") else str(v)
+        def clean_numeric(v):
+            if v in (None, ""): return None
+            if isinstance(v, (int, float)): return float(v)
+            cleaned = re.sub(r'[^\d.-]', '', str(v))
+            try: return float(cleaned) if cleaned else None
+            except ValueError: return None
+        def clean_int(v):
+            if v in (None, ""): return None
+            if isinstance(v, int): return v
+            if isinstance(v, float): return int(v)
+            cleaned = re.sub(r'[^\d-]', '', str(v).split('.')[0])
+            try: return int(cleaned) if cleaned else None
+            except ValueError: return None
 
         if existing:
             await execute(
-                """
-                UPDATE extracted_parameters SET
-                    gstin = $2, pan = $3, cin = $4, llpin = $5,
-                    annual_turnover = $6, net_profit = $7, total_liabilities = $8,
-                    avg_monthly_balance = $9, cheque_bounce_count = $10,
-                    loan_balances = $11::jsonb, promoter_details = $12::jsonb,
-                    collateral_details = $13::jsonb,
-                    confidence_scores = $14::jsonb, missing_fields = $15,
-                    is_complete = $16, updated_at = NOW()
-                WHERE application_id = $1
-                """,
-                application_id,
-                clean_scalar(raw.get("gstin")), clean_scalar(raw.get("pan")), clean_scalar(raw.get("cin")), clean_scalar(raw.get("llpin")),
-                clean_scalar(raw.get("annual_turnover")), clean_scalar(raw.get("net_profit")), clean_scalar(raw.get("total_liabilities")),
-                clean_scalar(raw.get("avg_monthly_balance")), clean_scalar(raw.get("cheque_bounce_count")),
-                loan_balances, promoter_details, collateral_details,
-                confidence_json, missing_fields, is_complete,
+                """UPDATE extracted_parameters SET
+                   gstin=$2, pan=$3, cin=$4, llpin=$5, annual_turnover=$6, net_profit=$7,
+                   total_liabilities=$8, avg_monthly_balance=$9, cheque_bounce_count=$10,
+                   loan_balances=$11::jsonb, promoter_details=$12::jsonb, collateral_details=$13::jsonb,
+                   confidence_scores=$14::jsonb, missing_fields=$15::text[], is_complete=$16,
+                   semantic_rule_evaluations=$17::jsonb, semantic_rules_hash=$18, updated_at=NOW()
+                   WHERE application_id=$1""",
+                application_id, clean_str(raw.get("gstin")), clean_str(raw.get("pan")), clean_str(raw.get("cin")), clean_str(raw.get("llpin")),
+                clean_numeric(raw.get("annual_turnover")), clean_numeric(raw.get("net_profit")), clean_numeric(raw.get("total_liabilities")),
+                clean_numeric(raw.get("avg_monthly_balance")), clean_int(raw.get("cheque_bounce_count")),
+                json.dumps(raw.get("loan_balances", [])), json.dumps(raw.get("promoter_details", [])), json.dumps(raw.get("collateral_details", [])),
+                json.dumps(conf), missing, is_complete,
+                json.dumps(semantic_rule_results), rules_hash,
             )
             return existing["id"]
-
-        new_id = str(uuid.uuid4())
-        await execute(
-            """
-            INSERT INTO extracted_parameters (
-                id, application_id, loan_id,
-                gstin, pan, cin, llpin,
-                annual_turnover, net_profit, total_liabilities,
-                avg_monthly_balance, cheque_bounce_count,
-                loan_balances, promoter_details, collateral_details,
-                confidence_scores, missing_fields, is_complete
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11, $12,
-                $13::jsonb, $14::jsonb, $15::jsonb,
-                $16::jsonb, $17, $18
+        else:
+            new_id = str(uuid.uuid4())
+            await execute(
+                """INSERT INTO extracted_parameters (
+                   id, application_id, loan_id, gstin, pan, cin, llpin, annual_turnover, net_profit,
+                   total_liabilities, avg_monthly_balance, cheque_bounce_count, loan_balances, promoter_details,
+                   collateral_details, confidence_scores, missing_fields, is_complete,
+                   semantic_rule_evaluations, semantic_rules_hash
+                   ) VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, $17::text[], $18, $19::jsonb, $20)""",
+                new_id, application_id, loan_id, clean_str(raw.get("gstin")), clean_str(raw.get("pan")), clean_str(raw.get("cin")), clean_str(raw.get("llpin")),
+                clean_numeric(raw.get("annual_turnover")), clean_numeric(raw.get("net_profit")), clean_numeric(raw.get("total_liabilities")),
+                clean_numeric(raw.get("avg_monthly_balance")), clean_int(raw.get("cheque_bounce_count")),
+                json.dumps(raw.get("loan_balances", [])), json.dumps(raw.get("promoter_details", [])), json.dumps(raw.get("collateral_details", [])),
+                json.dumps(conf), missing, is_complete,
+                json.dumps(semantic_rule_results), rules_hash,
             )
-            """,
-            new_id, application_id, loan_id,
-            clean_scalar(raw.get("gstin")), clean_scalar(raw.get("pan")), clean_scalar(raw.get("cin")), clean_scalar(raw.get("llpin")),
-            clean_scalar(raw.get("annual_turnover")), clean_scalar(raw.get("net_profit")), clean_scalar(raw.get("total_liabilities")),
-            clean_scalar(raw.get("avg_monthly_balance")), clean_scalar(raw.get("cheque_bounce_count")),
-            loan_balances, promoter_details, collateral_details,
-            confidence_json, missing_fields, is_complete,
-        )
-        return new_id
-
-    
+            return new_id
 
     async def _get_cached_result(self, application_id: str) -> dict | None:
-        row = await fetchrow(
-            "SELECT * FROM extracted_parameters WHERE application_id = $1",
-            application_id,
-        )
+        row = await fetchrow("SELECT * FROM extracted_parameters WHERE application_id = $1", application_id)
         return dict(row) if row else None
 
     def _format_result(self, row: dict) -> dict:
-        """Format a PostgreSQL row into the standard result dict."""
-        def parse_json(v, default):
-            if v is None:
-                return default
-            if isinstance(v, str):
+        conf_scores = row.get("confidence_scores") or {}
+        if isinstance(conf_scores, str):
+            try:
+                conf_scores = json.loads(conf_scores)
+            except Exception:
+                conf_scores = {}
+
+        overall_confidence = 1.0
+        if conf_scores:
+            overall_confidence = sum(conf_scores.values()) / max(len(conf_scores), 1)
+
+        semantic_rule_results = row.get("semantic_rule_evaluations") or []
+        if isinstance(semantic_rule_results, str):
+            try:
+                semantic_rule_results = json.loads(semantic_rule_results)
+            except Exception:
+                semantic_rule_results = []
+
+        params = dict(row)
+        for k, v in params.items():
+            if hasattr(v, "hex") or str(type(v)) == "<class 'uuid.UUID'>":
+                params[k] = str(v)
+            elif k in ("loan_balances", "promoter_details", "collateral_details") and isinstance(v, str):
                 try:
-                    return json.loads(v)
+                    params[k] = json.loads(v)
                 except Exception:
                     pass
-            return v
-
-        confidence_scores_raw = parse_json(row.get("confidence_scores"), {})
-        
-        confidence_scores = {
-            k: (v["score"] if isinstance(v, dict) else v)
-            for k, v in confidence_scores_raw.items()
-        }
 
         return {
             "extraction_id": str(row["id"]),
             "application_id": row["application_id"],
             "is_complete": row["is_complete"],
-            "missing_fields": row.get("missing_fields", []),
-            "parameters": {
-                "gstin":                row.get("gstin"),
-                "pan":                  row.get("pan"),
-                "cin":                  row.get("cin"),
-                "llpin":                row.get("llpin"),
-                "annual_turnover":      row.get("annual_turnover"),
-                "net_profit":           row.get("net_profit"),
-                "total_liabilities":    row.get("total_liabilities"),
-                "avg_monthly_balance":  row.get("avg_monthly_balance"),
-                "cheque_bounce_count":  row.get("cheque_bounce_count"),
-                "loan_balances":        parse_json(row.get("loan_balances"), []),
-                "promoter_details":     parse_json(row.get("promoter_details"), []),
-                "collateral_details":   parse_json(row.get("collateral_details"), []),
-            },
-            "confidence_scores": confidence_scores,
+            "overall_confidence": overall_confidence,
+            "missing_fields": row.get("missing_fields") or [],
+            "parameters": params,
+            "semantic_rule_results": semantic_rule_results,
         }
 
 

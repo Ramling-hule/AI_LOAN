@@ -1,7 +1,6 @@
-import asyncio
 from loguru import logger
 from config.database import execute, fetch
-from services.llm.providers.gemini import GeminiLLMProvider
+from services.llm.llm_facade import embed as llm_embed
 from services.vectordb.pgvector_service import query_similar_chunks
 
 UNDERWRITING_QUESTIONS = {
@@ -31,9 +30,14 @@ UNDERWRITING_QUESTIONS = {
     }
 }
 
+
 class RetrievalService:
     def __init__(self):
-        self.llm = GeminiLLMProvider()
+        # NOTE: previously this held its own `GeminiLLMProvider()` and called
+        # `.embed()` directly, which bypassed llm_facade entirely — meaning
+        # these embedding calls were NOT covered by the shared rate limiter.
+        # Routing through llm_facade.embed() fixes that and avoids a second,
+        # redundant provider instance.
         self._cache_initialized = False
 
     async def initialize_cache(self):
@@ -42,15 +46,14 @@ class RetrievalService:
             return
 
         logger.info("[RetrievalService] Initializing query embedding cache...")
-        
-        
+
         rows = await fetch("SELECT key FROM query_embedding_cache")
         existing_keys = {row["key"] for row in rows}
 
         for key, q_data in UNDERWRITING_QUESTIONS.items():
             if key not in existing_keys:
                 logger.info(f"[RetrievalService] Generating embedding for question '{key}'")
-                emb = await self.llm.embed(q_data["text"])
+                emb = await llm_embed(q_data["text"])
                 await execute(
                     """
                     INSERT INTO query_embedding_cache (key, query_text, embedding)
@@ -66,7 +69,6 @@ class RetrievalService:
         await self.initialize_cache()
         row = await fetch("SELECT embedding::text FROM query_embedding_cache WHERE key = $1", key)
         if row:
-            
             raw = row[0]["embedding"].strip("[]")
             return [float(x) for x in raw.split(",")]
         return None
@@ -79,13 +81,11 @@ class RetrievalService:
         await self.initialize_cache()
         all_hits = []
 
-        
         for key, q_data in UNDERWRITING_QUESTIONS.items():
             emb = await self.get_cached_embedding(key)
             if not emb:
                 continue
 
-            
             search_app_id = application_id
             if key == "policy_compliance":
                 search_app_id = f"BANK_{bank_name}"
@@ -101,11 +101,8 @@ class RetrievalService:
         if not all_hits:
             return "No relevant document evidence found."
 
-        
         unique_chunks = {}
         for h in all_hits:
-            
-            
             doc_name = h["document_name"]
             page = h.get("page_number") or 1
             idx = h["metadata"].get("chunk_index", 0)
@@ -113,7 +110,6 @@ class RetrievalService:
             if uid not in unique_chunks:
                 unique_chunks[uid] = h
 
-        
         sorted_chunks = sorted(
             unique_chunks.values(),
             key=lambda x: (
@@ -123,7 +119,6 @@ class RetrievalService:
             )
         )
 
-        
         compressed_chunks = []
         if sorted_chunks:
             current_group = [sorted_chunks[0]]
@@ -132,7 +127,6 @@ class RetrievalService:
                 prev = current_group[-1]
                 curr = sorted_chunks[i]
 
-                
                 same_doc = curr["document_name"] == prev["document_name"]
                 same_page = curr.get("page_number") == prev.get("page_number")
                 prev_idx = prev["metadata"].get("chunk_index", 0)
@@ -143,10 +137,9 @@ class RetrievalService:
                 else:
                     compressed_chunks.append(self._merge_group(current_group))
                     current_group = [curr]
-            
+
             compressed_chunks.append(self._merge_group(current_group))
 
-        
         context_text = "\n\n---\n\n".join(
             f"[Evidence Source: {c['document_name']} | Type: {c['document_type']}]\n{c['text']}"
             for c in compressed_chunks
@@ -158,10 +151,11 @@ class RetrievalService:
         """Merges a group of contiguous chunks into one."""
         if len(group) == 1:
             return group[0]
-        
+
         merged_text = "\n".join([c["text"] for c in group])
         base_chunk = group[0].copy()
         base_chunk["text"] = merged_text
         return base_chunk
+
 
 retrieval_service = RetrievalService()

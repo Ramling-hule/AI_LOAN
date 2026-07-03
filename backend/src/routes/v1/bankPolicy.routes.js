@@ -4,6 +4,7 @@ import {
   uploadPolicy,
   deletePolicy,
   updatePolicy,
+  extractPolicyRules,
 } from '../../controllers/bankPolicy.controller.js';
 import { protect, authorizeRoles, ROLES } from '../../middleware/auth.js';
 import { upload } from '../../middleware/upload.js';
@@ -25,5 +26,7 @@ router.put('/:id', upload.single('file'), updatePolicy);
 
 
 router.delete('/:id', deletePolicy);
+
+router.post('/:id/extract', extractPolicyRules);
 
 export default router;

@@ -23,9 +23,15 @@ import {
   ExternalLink,
   Loader2,
   History,
+  Send,
+  Bot,
+  MessageSquare,
+  X,
+  User,
 } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext.jsx';
+import ReactMarkdown from 'react-markdown';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card.jsx';
 import { Badge } from '@/components/ui/badge.jsx';
 import { Progress } from '@/components/ui/progress.jsx';
@@ -73,6 +79,81 @@ export default function SMEDashboard() {
   const [otpCodePreview, setOtpCodePreview] = useState('');
   const [loadingLink, setLoadingLink] = useState(false);
   const [linkError, setLinkError] = useState('');
+
+  // Policy Chatbot States
+  const [isPolicyChatOpen, setIsPolicyChatOpen] = useState(false);
+  const [selectedChatBank, setSelectedChatBank] = useState(null);
+  const [policyDocs, setPolicyDocs] = useState([]);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [loadingPolicies, setLoadingPolicies] = useState(false);
+
+  const handleOpenPolicyChat = async (bank) => {
+    setSelectedChatBank(bank);
+    setIsPolicyChatOpen(true);
+    setLoadingPolicies(true);
+    setChatMessages([
+      {
+        role: 'bot',
+        content: `Hello! I am your AI policy assistant for ${bank.name}. Ask me any questions about the credit guidelines, underwriting requirements, or policy criteria for this bank.`,
+      },
+    ]);
+    try {
+      const res = await bankApi.getBankPolicies(bank.name);
+      setPolicyDocs(res.data.data || []);
+    } catch (err) {
+      console.error('Failed to fetch policies for bank:', err);
+    } finally {
+      setLoadingPolicies(false);
+    }
+  };
+
+  const handleSendPolicyQuery = async (e) => {
+    e.preventDefault();
+    if (!chatInput.trim() || sendingMessage) return;
+
+    const userMsg = chatInput.trim();
+    setChatMessages((prev) => [...prev, { role: 'user', content: userMsg }]);
+    setChatInput('');
+    setSendingMessage(true);
+
+    try {
+      const res = await bankApi.chatWithPolicy(selectedChatBank.name, userMsg);
+      const data = res.data;
+      if (data.success) {
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            role: 'bot',
+            content: data.answer,
+            sources: data.sources || [],
+          },
+        ]);
+      } else {
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            role: 'bot',
+            content: data.message || 'Sorry, I encountered an error answering your question.',
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error('Policy chat failed:', err);
+      const errMsg = err.response?.data?.message || 'Failed to connect to the AI policy assistant.';
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: 'bot',
+          content: errMsg,
+        },
+      ]);
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
 
   const fetchAccounts = async () => {
     try {
@@ -831,6 +912,7 @@ export default function SMEDashboard() {
                       <TableHead>Interest Range</TableHead>
                       <TableHead>Max Loan Limit</TableHead>
                       <TableHead>Est. Processing</TableHead>
+                      <TableHead>Latest Policy</TableHead>
                       <TableHead className="text-right pr-6">Action</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -849,20 +931,45 @@ export default function SMEDashboard() {
                           <TableCell className="text-emerald-400 font-semibold">{b.rate}</TableCell>
                           <TableCell className="text-white font-medium">{b.limit}</TableCell>
                           <TableCell className="text-slate-400">{b.time}</TableCell>
+                          <TableCell>
+                            {b.latest_policy ? (
+                              <a
+                                href={b.latest_policy.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={`View: ${b.latest_policy.title}`}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 hover:text-emerald-300 rounded-full text-[10px] font-semibold transition-all"
+                              >
+                                <FileText className="w-3 h-3 flex-shrink-0" />
+                                <span className="max-w-[120px] truncate">{b.latest_policy.title}</span>
+                              </a>
+                            ) : (
+                              <span className="text-[10px] text-slate-500 italic">No policy yet</span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right pr-6">
-                            <button
-                              onClick={() => navigate('/loan/apply', { state: { bankName: b.name } })}
-                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-1 ml-auto"
-                            >
-                              Apply
-                              <ArrowRight className="w-3 h-3" />
-                            </button>
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => handleOpenPolicyChat(b)}
+                                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-white/5 text-slate-200 font-semibold text-xs rounded-lg transition-colors flex items-center gap-1"
+                              >
+                                Policy Chat
+                                <Sparkles className="w-3 h-3 text-blue-400" />
+                              </button>
+                              <button
+                                onClick={() => navigate('/loan/apply', { state: { bankName: b.name } })}
+                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-1"
+                              >
+                                Apply
+                                <ArrowRight className="w-3 h-3" />
+                              </button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-slate-300">
+                        <TableCell colSpan={8} className="text-center py-8 text-slate-300">
                           No partner banks found matching your search.
                         </TableCell>
                       </TableRow>
@@ -1878,6 +1985,138 @@ export default function SMEDashboard() {
         )}
 
       </main>
+
+      {/* Policy Chatbot Drawer */}
+      {isPolicyChatOpen && selectedChatBank && (
+        <div className="fixed inset-y-0 right-0 w-full sm:w-[480px] bg-slate-900 border-l border-white/5 shadow-2xl flex flex-col z-50 animate-slide-in">
+          {/* Header */}
+          <div className="h-16 px-6 border-b border-white/5 flex items-center justify-between bg-slate-950/40">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-blue-400" />
+              <div>
+                <h3 className="font-bold text-white text-sm">{selectedChatBank.name}</h3>
+                <span className="text-[10px] text-slate-400">Policy Assistant Chatbot</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsPolicyChatOpen(false)}
+              className="p-1.5 hover:bg-white/5 text-slate-400 hover:text-white rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Policy Docs List Section */}
+          <div className="px-6 py-3 border-b border-white/5 bg-slate-950/20">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+              Policy Documents
+            </span>
+            {loadingPolicies ? (
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Loading active policy list...</span>
+              </div>
+            ) : policyDocs.length > 0 ? (
+              <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                {policyDocs.map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between p-2 rounded-lg bg-white/[0.01] border border-white/5 hover:border-white/10 text-xs">
+                    <div className="flex items-center gap-2 truncate mr-2">
+                      <FileText className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                      <span className="text-white truncate font-medium">{doc.title}</span>
+                    </div>
+                    {doc.url && (
+                      <a
+                        href={doc.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-0.5 flex-shrink-0"
+                      >
+                        View PDF
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span className="text-xs text-slate-400 italic">No policy documents uploaded for this bank.</span>
+            )}
+          </div>
+
+          {/* Chat Messages */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {chatMessages.map((msg, idx) => (
+              <div key={idx} className={cn("flex gap-3 max-w-[85%] mb-2", msg.role === 'user' ? "ml-auto flex-row-reverse" : "")}>
+                <div className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border",
+                  msg.role === 'user'
+                    ? "bg-blue-600/10 border-blue-500/20 text-blue-400"
+                    : "bg-slate-800 border-white/5 text-slate-300"
+                )}>
+                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                </div>
+                <div className="space-y-1.5 min-w-0">
+                  <div className={cn(
+                    "p-3 rounded-2xl text-xs leading-relaxed break-words",
+                    msg.role === 'user'
+                      ? "bg-blue-600 text-white rounded-tr-none"
+                      : "bg-slate-800 text-slate-200 border border-white/5 rounded-tl-none prose prose-invert prose-xs max-w-none prose-p:leading-relaxed prose-pre:bg-slate-900 prose-pre:border prose-pre:border-white/10"
+                  )}>
+                    {msg.role === 'user' ? (
+                      msg.content
+                    ) : (
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    )}
+                  </div>
+                  {/* Sources Badges */}
+                  {msg.sources && msg.sources.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1 pl-1">
+                      <span className="text-[9px] text-slate-400 mr-1 flex items-center">Citations:</span>
+                      {msg.sources.map((src, sIdx) => (
+                        <span key={sIdx} className="bg-blue-500/10 border border-blue-500/20 text-[9px] text-blue-400 font-semibold px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                          <FileText className="w-2.5 h-2.5" />
+                          {src}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {sendingMessage && (
+              <div className="flex gap-3 max-w-[85%]">
+                <div className="w-8 h-8 rounded-full bg-slate-800 border border-white/5 text-slate-300 flex items-center justify-center flex-shrink-0">
+                  <Bot className="w-4 h-4 animate-pulse" />
+                </div>
+                <div className="bg-slate-800 border border-white/5 text-slate-400 p-3 rounded-2xl rounded-tl-none text-xs flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Analyzing policies...
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Input Form */}
+          <form onSubmit={handleSendPolicyQuery} className="p-4 border-t border-white/5 bg-slate-950/40 flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Ask about credit criteria, required documents..."
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              disabled={sendingMessage}
+              className="flex-1 bg-slate-950 border border-white/5 rounded-xl px-4 py-2.5 text-white placeholder-slate-400 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500/30 focus:border-blue-500/50 transition-all disabled:opacity-55"
+            />
+            <button
+              type="submit"
+              disabled={!chatInput.trim() || sendingMessage}
+              className="p-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white rounded-xl transition-all flex items-center justify-center flex-shrink-0"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
+

@@ -4,7 +4,8 @@ import logger from '../utils/logger.js';
 import UnderwritingService from '../services/underwriting.service.js';
 import ExtractionService from '../services/extraction.service.js';
 import OcrService from '../services/ocr.service.js';
-
+import { supabase } from '../db/supabaseClient.js';
+import loanRepository from '../repositories/LoanRepository.js';
 
 const triggerAssessment = asyncHandler(async (req, res) => {
   const { loanId } = req.params;
@@ -92,10 +93,54 @@ const getQueueJobStatus = asyncHandler(async (req, res) => {
   });
 });
 
+const getRuleInventory = asyncHandler(async (req, res) => {
+  const { bankName } = req.params;
+  
+  const { data, error } = await supabase
+    .from('policy_rules')
+    .select('*')
+    .eq('bank_id', bankName);
+
+  if (error) {
+    logger.error(`[Underwriting Controller] Error fetching rule inventory: ${error.message}`);
+    throw ApiError.internal('Failed to fetch rule inventory');
+  }
+
+  res.json({
+    success: true,
+    data,
+  });
+});
+
+const getUnderwritingAuditLogs = asyncHandler(async (req, res) => {
+  const { loanId } = req.params;
+  
+  const loan = await loanRepository.findById(loanId);
+  if (!loan) throw ApiError.notFound('Loan not found');
+
+  const { data, error } = await supabase
+    .from('underwriting_audit_logs')
+    .select('*')
+    .eq('application_id', loan.app_id)
+    .order('timestamp', { ascending: false });
+
+  if (error) {
+    logger.error(`[Underwriting Controller] Error fetching audit logs: ${error.message}`);
+    throw ApiError.internal('Failed to fetch underwriting audit logs');
+  }
+
+  res.json({
+    success: true,
+    data,
+  });
+});
+
 export default {
   triggerAssessment,
   getAssessmentReport,
   reevaluateLoan,
   notifyPolicyIssue,
-  getQueueJobStatus
+  getQueueJobStatus,
+  getRuleInventory,
+  getUnderwritingAuditLogs
 };

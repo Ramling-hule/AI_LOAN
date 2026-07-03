@@ -33,6 +33,8 @@ export const bankApi = {
 
   
   deletePolicy: (id) => apiClient.delete(`/bank-policies/${id}`),
+  
+  extractPolicyRules: (id) => apiClient.post(`/bank-policies/${id}/extract`),
 
   
   updatePolicy: (id, title, description, file, content) => {
@@ -49,6 +51,11 @@ export const bankApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+
+  
+  chatWithPolicy: (bankName, query) => apiClient.post(`/banks/policy/${encodeURIComponent(bankName)}/chat`, { query }),
+
+  getBankPolicies: (bankName) => apiClient.get(`/banks/policy/${encodeURIComponent(bankName)}`),
 };
 
 export default bankApi;

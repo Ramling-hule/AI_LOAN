@@ -2,9 +2,10 @@ import {
   createLoan, findLoanById, findLoans, updateLoanDraft, setLoanDocument, removeDocument,
   deleteLoan, createStatusHistory, getStatusHistory, getLastMissingInfoHistory,
 } from '../db/queries/loans.queries.js';
-import { findSMEById, findBankAdminById, findBankAdminsByBankName, searchSMEUsers } from '../db/queries/users.queries.js';
+import { findSMEById, findBankAdminById, findBankAdminsByBankName, searchSMEUsers, getRegisteredBanks } from '../db/queries/users.queries.js';
 import { findOcrJobById, markOcrJobVectorized } from '../db/queries/ocrJobs.queries.js';
 import { deleteChunksBySourceDocument } from '../db/queries/embeddings.queries.js';
+import { getLatestPolicyForBank } from '../db/queries/policies.queries.js';
 import { cloudinary } from '../config/cloudinary.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
@@ -16,14 +17,6 @@ import ExtractionService from './extraction.service.js';
 
 
 
-
-const PARTNER_BANKS = [
-  { id: 'b1', name: 'State Bank of India', branch: 'Corporate Mumbai', ifsc: 'SBIN0000300', rate: '8.9% - 10.5%', limit: '₹50L', time: '5-7 days' },
-  { id: 'b2', name: 'HDFC Bank', branch: 'GIFT City Ahmedabad', ifsc: 'HDFC0000240', rate: '9.2% - 11.2%', limit: '₹1.5Cr', time: '3-4 days' },
-  { id: 'b3', name: 'ICICI Bank', branch: 'Bandra Kurla Complex', ifsc: 'ICIC0000004', rate: '9.5% - 11.8%', limit: '₹1Cr', time: '4-5 days' },
-  { id: 'b4', name: 'Axis Bank', branch: 'Connaught Place Delhi', ifsc: 'UTIB0000007', rate: '9.4% - 12.0%', limit: '₹75L', time: '3-5 days' },
-  { id: 'b5', name: 'Federal Bank', branch: 'Kochi Main', ifsc: 'FDRL0001002', rate: '8.7% - 10.2%', limit: '₹40L', time: '6-8 days' },
-];
 
 const STATUS_PROGRESS = {
   draft: 10, submitted: 20, eligibility_check: 40,
@@ -64,7 +57,36 @@ const deleteFromCloudinary = (publicId) =>
 const LoanService = {
 
   async getPartnerBanks() {
-    return PARTNER_BANKS;
+    // Fetch all distinct registered banks from the DB
+    const banks = await getRegisteredBanks();
+
+    // For each bank, fetch their latest policy in parallel
+    const withPolicies = await Promise.all(
+      banks.map(async (b, index) => {
+        const latestPolicy = await getLatestPolicyForBank(b.bank_name);
+        return {
+          id: b.id,
+          name: b.bank_name,
+          branch: b.branch_name || 'Main Branch',
+          ifsc: b.ifsc_code || 'N/A',
+          // These fields may not exist in DB; provide sensible defaults
+          rate: 'Contact Bank',
+          limit: 'Contact Bank',
+          time: 'Contact Bank',
+          latest_policy: latestPolicy
+            ? {
+                id: latestPolicy.id,
+                title: latestPolicy.title,
+                filename: latestPolicy.filename,
+                url: latestPolicy.url,
+                uploaded_at: latestPolicy.created_at,
+              }
+            : null,
+        };
+      })
+    );
+
+    return withPolicies;
   },
 
   async createLoan(smeId, data) {
@@ -104,11 +126,13 @@ const LoanService = {
     const { bank_name } = data;
     if (!bank_name) throw ApiError.badRequest('Bank name is required');
 
-    const validBank = PARTNER_BANKS.some(b => b.name === bank_name);
-    if (!validBank) throw ApiError.badRequest(`Bank "${bank_name}" is not a registered partner lender`);
-
     const sme = await findSMEById(smeId);
     if (!sme) throw ApiError.notFound('SME Applicant account not found');
+
+    // Validate bank exists in the registered bank list (DB-backed)
+    const registeredBanks = await getRegisteredBanks();
+    const validBank = registeredBanks.some(b => b.bank_name === bank_name);
+    if (!validBank) throw ApiError.badRequest(`Bank "${bank_name}" is not a registered partner lender`);
 
     const draft = await createLoan({ sme_id: smeId, bank_name });
     logger.info(`Loan draft created: ${draft.app_id}`);

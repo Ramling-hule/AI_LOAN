@@ -11,12 +11,30 @@ export const findPoliciesForBank = async (bankName) => {
     .from('bank_policy_documents')
     .select('*')
     .eq('is_active', true)
-    .or(`bank_name.eq.${bankName},is_system_default.eq.true`)
+    .or(`bank_name.eq."${bankName}",is_system_default.eq.true`)
     .order('is_system_default', { ascending: true })
     .order('created_at', { ascending: true });
 
   if (error) throw error;
   return data || [];
+};
+
+/**
+ * Returns the single most-recently uploaded active policy for a bank,
+ * or null if the bank has no policies yet.
+ */
+export const getLatestPolicyForBank = async (bankName) => {
+  const { data, error } = await supabase
+    .from('bank_policy_documents')
+    .select('id, title, filename, url, created_at, is_system_default')
+    .eq('is_active', true)
+    .eq('bank_name', bankName)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
 };
 
 export const findAllPolicies = async ({ bankName, page = 1, limit = 20 }) => {
@@ -115,11 +133,16 @@ export const updatePolicy = async (
   return data;
 };
 
-export const deletePolicy = async (id) => {
+export const deletePolicy = async (id, bankName) => {
   const { error } = await supabase
     .from('bank_policy_documents')
     .update({ is_active: false })
     .eq('id', id);
 
   if (error) throw error;
+
+  if (bankName) {
+    await supabase.from('policy_rules').delete().eq('bank_id', bankName);
+    await supabase.from('rule_relationships').delete().eq('bank_id', bankName);
+  }
 };

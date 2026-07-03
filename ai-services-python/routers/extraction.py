@@ -3,7 +3,7 @@ FastAPI router for parameter extraction endpoints.
 Replaces extraction.routes.js + extraction.controller.js.
 """
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from loguru import logger
 from config.database import fetchrow
 from services.extraction.extraction_service import extraction_service
@@ -16,6 +16,13 @@ class RunExtractionBody(BaseModel):
     loan_id: str
     enable_second_pass: bool = True
 
+    @field_validator("loan_id")
+    @classmethod
+    def _not_blank(cls, v: str):
+        if not v.strip():
+            raise ValueError("loan_id must not be empty")
+        return v
+
 
 @router.post("/run/{application_id}")
 async def run_extraction(application_id: str, body: RunExtractionBody):
@@ -23,6 +30,8 @@ async def run_extraction(application_id: str, body: RunExtractionBody):
     Trigger parameter extraction for a loan application.
     Enqueues the job to run sequentially.
     """
+    if not application_id.strip():
+        raise HTTPException(status_code=400, detail="application_id must not be empty")
     try:
         payload = {
             "application_id": application_id,
@@ -39,6 +48,8 @@ async def run_extraction(application_id: str, body: RunExtractionBody):
 @router.post("/rerun/{application_id}")
 async def rerun_extraction(application_id: str, body: RunExtractionBody):
     """Force re-extraction, bypassing the cache."""
+    if not application_id.strip():
+        raise HTTPException(status_code=400, detail="application_id must not be empty")
     try:
         payload = {
             "application_id": application_id,

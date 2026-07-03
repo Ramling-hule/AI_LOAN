@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Sparkles,
   ShieldCheck,
+  Database
 } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext.jsx';
@@ -160,6 +161,9 @@ export default function BankAdminDashboard() {
   
   const [policies, setPolicies] = useState([]);
   const [loadingPolicies, setLoadingPolicies] = useState(false);
+  const [ruleInventory, setRuleInventory] = useState([]);
+  const [loadingRuleInventory, setLoadingRuleInventory] = useState(false);
+  const [underwritingAuditLogs, setUnderwritingAuditLogs] = useState([]);
   const [auditAppId, setAuditAppId] = useState('');
   const [viewingConfidentialDoc, setViewingConfidentialDoc] = useState(null);
 
@@ -217,6 +221,19 @@ export default function BankAdminDashboard() {
       console.error('Failed to load bank policies:', err);
     } finally {
       setLoadingPolicies(false);
+    }
+  };
+
+  const fetchRuleInventory = async () => {
+    if (!user?.bank_name) return;
+    try {
+      setLoadingRuleInventory(true);
+      const { data } = await underwritingApi.getRuleInventory(user.bank_name);
+      setRuleInventory(data.data);
+    } catch (err) {
+      console.error('Failed to load rule inventory:', err);
+    } finally {
+      setLoadingRuleInventory(false);
     }
   };
 
@@ -333,8 +350,11 @@ export default function BankAdminDashboard() {
   }, [auditPage, auditStatusFilter, dashboardView]);
 
   useEffect(() => {
-    fetchPolicies();
-  }, []);
+    if (user?.bank_name) {
+      fetchPolicies();
+      fetchRuleInventory();
+    }
+  }, [user?.bank_name]);
 
   const handleUploadPolicySubmit = async (e) => {
     e.preventDefault();
@@ -401,6 +421,15 @@ export default function BankAdminDashboard() {
       await fetchPolicies();
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to delete policy document');
+    }
+  };
+
+  const handleExtractRules = async (id) => {
+    try {
+      await bankApi.extractPolicyRules(id);
+      alert('Extraction job submitted successfully. The rules will appear in the inventory shortly.');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to extract policy rules');
     }
   };
 
@@ -577,6 +606,32 @@ export default function BankAdminDashboard() {
     }
   };
 
+  const loadUnderwritingAuditLogs = async (loanId) => {
+    try {
+      const { data } = await underwritingApi.getUnderwritingAuditLogs(loanId);
+      const flattenedLogs = data.data?.flatMap((dbLog) => {
+        return (dbLog.rule_evaluations || []).map((evalItem, idx) => ({
+          ...evalItem,
+          id: `${dbLog.id}-${idx}`,
+          created_at: dbLog.created_at,
+          result: evalItem.status,
+          engine: evalItem.engine || 'System',
+          policy_id: evalItem.policy_id,
+          rule_name: evalItem.rule_name || evalItem.policy_name,
+          rule_id: evalItem.rule_id,
+          metadata: {
+            reason: evalItem.reason,
+            applicant_value: evalItem.applicant_value,
+            ...evalItem.metadata
+          }
+        }));
+      }) || [];
+      setUnderwritingAuditLogs(flattenedLogs);
+    } catch (err) {
+      console.error('Failed to fetch underwriting audit logs:', err);
+    }
+  };
+
   const handleOpenReview = (app) => {
     setSelectedApp(app);
     setNextStatus('');
@@ -591,6 +646,7 @@ export default function BankAdminDashboard() {
     setReevaluatingLoan(false);
     setAssessmentError('');
     loadHistoryLogs(app._id);
+    loadUnderwritingAuditLogs(app._id);
   };
 
   const handleStatusChangeSubmit = async (e) => {
@@ -1024,6 +1080,15 @@ export default function BankAdminDashboard() {
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      handleExtractRules(doc._id || doc.id);
+                                    }}
+                                    className="text-purple-400 hover:text-purple-300 font-semibold text-[11px] transition-colors"
+                                  >
+                                    Extract Rules
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       handleStartEditPolicy(doc);
                                     }}
                                     className="text-amber-400 hover:text-amber-300 font-semibold text-[11px] transition-colors"
@@ -1180,6 +1245,85 @@ export default function BankAdminDashboard() {
               </CardContent>
             </Card>
           </div>
+        </div>
+
+        {/* Bank Policy Rule Inventory Viewer */}
+        <div className="mt-6">
+          <Card className="w-full">
+            <CardHeader className="pb-3 border-b border-white/5 py-4 flex flex-row justify-between items-center">
+              <div>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Database className="w-4.5 h-4.5 text-blue-400" />
+                  Bank Extracted Rule Inventory
+                </CardTitle>
+                <CardDescription className="text-[10px] text-slate-400 mt-1">
+                  Database of automated checks derived from uploaded policy documents
+                </CardDescription>
+              </div>
+              {loadingRuleInventory && (
+                <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+              )}
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="max-h-[300px] overflow-y-auto">
+                <Table className="w-full text-xs">
+                  <TableHeader className="bg-slate-900/50 sticky top-0 z-10">
+                    <TableRow className="border-white/5 hover:bg-transparent">
+                      <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Rule ID</TableHead>
+                      <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Rule Name</TableHead>
+                      <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Type</TableHead>
+                      <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Parameters</TableHead>
+                      <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Condition</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {ruleInventory.length > 0 ? (
+                      ruleInventory.map((rule) => (
+                        <TableRow key={rule.id || rule.rule_id} className="border-white/5 hover:bg-white/[0.02]">
+                          <TableCell className="font-mono text-[9px] text-slate-500">{(rule.rule_id || rule.id || '').substring(0, 8)}</TableCell>
+                          <TableCell className="font-medium text-slate-300">{rule.parameter || rule.rule_name || <span className="text-slate-600 italic">—</span>}</TableCell>
+                          <TableCell>
+                            <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[8px] uppercase">
+                              {rule.rule_type}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-slate-400">
+                            {rule.parameter ? (
+                              <div className="text-[9px]">
+                                <span className="font-mono text-emerald-400">{rule.category || 'General'}</span>
+                                {rule.policy_section && (
+                                  <div className="text-slate-500 mt-0.5">§ {rule.policy_section}</div>
+                                )}
+                                {rule.policy_page != null && (
+                                  <div className="text-slate-500 mt-0.5">Page {rule.policy_page}</div>
+                                )}
+                              </div>
+                            ) : (
+                              Object.entries(rule.parameters || {}).map(([key, val]) => (
+                                <div key={key} className="flex gap-2 text-[9px]">
+                                  <span className="font-mono text-emerald-400">{key}:</span>
+                                  <span>{val}</span>
+                                </div>
+                              ))
+                            )}
+                          </TableCell>
+                          <TableCell className="font-mono text-[9px] text-slate-500 bg-slate-950 p-2 rounded truncate max-w-[200px]">
+                            {rule.description || rule.condition_expression}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-6 text-slate-500 italic">
+                          No automated rules extracted. Upload policy documents and run extraction.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {}
@@ -2404,69 +2548,170 @@ export default function BankAdminDashboard() {
                         </div>
                       </div>
 
-                      {/* AI Extracted Reasoning */}
+                      {/* AI Underwriting Reasoning */}
                       <div className="space-y-3 pt-4">
                         <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
                           <MessageSquare className="w-4 h-4 text-blue-400" />
-                          AI Underwriting Reasoning
+                          AI Underwriting Decision
                         </h4>
 
-                        <div className="grid sm:grid-cols-1 lg:grid-cols-2 gap-3.5">
-                          {Object.entries(underwritingAssessment)
-                            .filter(([key, val]) => 
-                              typeof val === 'string' && 
-                              !['risk_level', 'risk_score', 'execution_timestamp', 'prompt_version', 'assessed_at', 'status', 'job_id', 'id'].includes(key)
-                            )
-                            .map(([key, value], idx) => (
-                              <div key={idx} className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col gap-3">
-                                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                                  {key.replace(/_/g, ' ')}
-                                </span>
-                                <p className="text-slate-200 text-[11.5px] leading-relaxed whitespace-pre-wrap">
-                                  {value}
-                                </p>
-                              </div>
-                            ))}
+                        <div className="grid sm:grid-cols-1 lg:grid-cols-3 gap-3.5">
+                          <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col gap-3">
+                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                              Decision
+                            </span>
+                            <div className="flex items-center gap-2">
+                              {underwritingAssessment.underwriting_decision === 'APPROVE' ? (
+                                <CheckCircle className="w-5 h-5 text-emerald-500" />
+                              ) : underwritingAssessment.underwriting_decision === 'REJECT' ? (
+                                <AlertCircle className="w-5 h-5 text-red-500" />
+                              ) : (
+                                <AlertTriangle className="w-5 h-5 text-amber-500" />
+                              )}
+                              <span className={`text-sm font-extrabold ${
+                                underwritingAssessment.underwriting_decision === 'APPROVE' ? 'text-emerald-400' :
+                                underwritingAssessment.underwriting_decision === 'REJECT' ? 'text-red-400' : 'text-amber-400'
+                              }`}>
+                                {underwritingAssessment.underwriting_decision || 'MANUAL_REVIEW'}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          <div className="bg-slate-950 p-4 border border-white/5 rounded-2xl flex flex-col gap-3 lg:col-span-2">
+                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                              Decision Summary
+                            </span>
+                            <p className="text-slate-200 text-[11.5px] leading-relaxed whitespace-pre-wrap">
+                              {underwritingAssessment.summary || 'No summary provided.'}
+                            </p>
+                          </div>
                         </div>
                       </div>
 
-                      {/* AI Policy Evaluations */}
+                      {/* AI Policy Evaluations Grouped */}
                       {underwritingAssessment.policies_evaluation && underwritingAssessment.policies_evaluation.length > 0 && (
-                        <div className="space-y-3 pt-4 border-t border-white/5">
+                        <div className="space-y-4 pt-4 border-t border-white/5">
                           <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
                             <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                            Policy Adherence Evaluation
+                            Multi-Engine Policy Adherence
                           </h4>
-                          <div className="flex flex-col gap-3">
-                            {underwritingAssessment.policies_evaluation.map((policy, idx) => (
-                              <div key={idx} className={`p-4 border rounded-2xl flex flex-col gap-2 ${
-                                policy.status === 'PASSED' 
-                                  ? 'bg-emerald-500/5 border-emerald-500/20' 
-                                  : 'bg-red-500/5 border-red-500/20'
-                              }`}>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                                    {policy.status === 'PASSED' ? (
-                                      <CheckCircle className="w-4 h-4 text-emerald-500" />
-                                    ) : (
-                                      <AlertCircle className="w-4 h-4 text-red-500" />
-                                    )}
-                                    {policy.policy_name}
-                                  </span>
-                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                    policy.status === 'PASSED' ? 'text-emerald-500 bg-emerald-500/10' : 'text-red-500 bg-red-500/10'
-                                  }`}>
-                                    {policy.status}
-                                  </span>
+                          
+                          <div className="space-y-6">
+                            {['Hard', 'Derived', 'Exception', 'Semantic'].map((engineType) => {
+                              const engineRules = underwritingAssessment.policies_evaluation.filter(r => r.rule_type === engineType);
+                              if (engineRules.length === 0) return null;
+                              
+                              return (
+                                <div key={engineType} className="space-y-2">
+                                  <h5 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-1">
+                                    {engineType} Engine Rules
+                                  </h5>
+                                  <div className="flex flex-col gap-2">
+                                    {engineRules.map((policy, idx) => (
+                                      <div key={idx} className={`p-3 border rounded-xl flex flex-col gap-2 ${
+                                        policy.status.includes('PASS') 
+                                          ? 'bg-emerald-500/5 border-emerald-500/20' 
+                                          : 'bg-red-500/5 border-red-500/20'
+                                      }`}>
+                                        <div className="flex items-start justify-between gap-4">
+                                          <div className="flex items-start gap-2 max-w-[80%]">
+                                            {policy.status.includes('PASS') ? (
+                                              <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                                            ) : (
+                                              <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                                            )}
+                                            <span className="text-xs font-semibold text-slate-200">
+                                              {policy.rule_name || policy.policy_name}
+                                            </span>
+                                          </div>
+                                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded flex-shrink-0 ${
+                                            policy.status.includes('PASS') ? 'text-emerald-500 bg-emerald-500/10' : 'text-red-500 bg-red-500/10'
+                                          }`}>
+                                            {policy.status}
+                                          </span>
+                                        </div>
+                                        <p className="text-slate-400 text-[11px] leading-relaxed ml-6">
+                                          {policy.reason}
+                                        </p>
+                                        {policy.applicant_value && (
+                                          <p className="text-slate-500 text-[10px] ml-6 font-mono">
+                                            Value: {policy.applicant_value}
+                                          </p>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
-                                <p className="text-slate-300 text-[11.5px] leading-relaxed ml-6">
-                                  {policy.reason}
-                                </p>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}
+
+                      {/* Underwriting Audit Logs */}
+                      <div className="space-y-4 pt-4 border-t border-white/5">
+                        <h4 className="font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                          <Database className="w-4 h-4 text-purple-400" />
+                          System Underwriting Audit Logs
+                        </h4>
+                        
+                        <div className="bg-slate-950 border border-white/5 rounded-2xl overflow-hidden">
+                          <Table className="w-full text-xs">
+                            <TableHeader className="bg-slate-900/50">
+                              <TableRow className="border-white/5 hover:bg-transparent">
+                                <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Timestamp</TableHead>
+                                <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Engine / Policy</TableHead>
+                                <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Rule</TableHead>
+                                <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Result</TableHead>
+                                <TableHead className="text-[9px] font-bold uppercase tracking-wider text-slate-400 h-8">Metadata</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {underwritingAuditLogs && underwritingAuditLogs.length > 0 ? (
+                                underwritingAuditLogs.map((log) => (
+                                  <TableRow key={log.id} className="border-white/5 hover:bg-white/[0.02]">
+                                    <TableCell className="font-mono text-[9px] text-slate-500">
+                                      {new Date(log.created_at).toLocaleString()}
+                                    </TableCell>
+                                    <TableCell className="text-slate-300">
+                                      <div className="flex flex-col gap-1">
+                                        <span className="font-medium">{log.engine || 'System'}</span>
+                                        {log.policy_id && (
+                                          <span className="text-[9px] text-slate-500 font-mono">Policy: {log.policy_id.substring(0, 8)}</span>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell>
+                                      <div className="flex flex-col gap-1">
+                                        {log.rule_name && <span className="font-medium text-slate-300">{log.rule_name}</span>}
+                                        {log.rule_id && <span className="text-[9px] text-slate-500 font-mono">ID: {log.rule_id.substring(0, 8)}</span>}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge className={`text-[8px] uppercase ${
+                                        log.result === 'PASS' || log.result === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                        log.result === 'FAIL' || log.result === 'REJECTED' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                                        'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                      }`}>
+                                        {log.result}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className="font-mono text-[9px] text-slate-500 truncate max-w-[150px]" title={JSON.stringify(log.metadata)}>
+                                      {log.metadata ? JSON.stringify(log.metadata) : '-'}
+                                    </TableCell>
+                                  </TableRow>
+                                ))
+                              ) : (
+                                <TableRow>
+                                  <TableCell colSpan={5} className="text-center py-6 text-slate-500 italic">
+                                    No audit logs recorded for this assessment.
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
 
                       {/* Action buttons */}
                       <div className="flex justify-end pt-4 border-t border-white/5 gap-3">
@@ -2544,7 +2789,7 @@ export default function BankAdminDashboard() {
                 <div>
                   <span className="text-[10px] font-bold tracking-widest text-red-400 uppercase flex items-center gap-1.5">
                     <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
-                    {isModalEditing ? 'EDIT MODE' : doc.is_system_default ? 'CONFIDENTIAL 
+                    {isModalEditing ? 'EDIT MODE' : doc.is_system_default ? 'CONFIDENTIAL POLICY' : 'CUSTOM POLICY'}
                   </span>
                   <h3 className="text-base font-extrabold text-white mt-1">
                     {isModalEditing ? `Edit: ${doc.title}` : doc.title}

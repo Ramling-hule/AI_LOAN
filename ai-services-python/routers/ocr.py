@@ -17,6 +17,7 @@ async def process_document(
     application_id: str = Form(""),
     document_type: str = Form("general"),
     document_url: str = Form(""),
+    extract_only: bool = Form(False),
 ):
     """
     Accept a document file and queue it for OCR + vectorization.
@@ -35,6 +36,7 @@ async def process_document(
         application_id=application_id,
         document_type=document_type,
         document_url=document_url,
+        extract_only=extract_only,
     )
 
     success = await submit_job(item)

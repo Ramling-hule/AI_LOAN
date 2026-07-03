@@ -44,4 +44,16 @@ router.get(
   UnderwritingController.getQueueJobStatus
 );
 
+router.get(
+  '/inventory/:bankName',
+  requireBankOrSuper,
+  UnderwritingController.getRuleInventory
+);
+
+router.get(
+  '/loans/:loanId/audit-logs',
+  requireAuth,
+  UnderwritingController.getUnderwritingAuditLogs
+);
+
 export default router;
