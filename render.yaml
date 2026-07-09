@@ -1,0 +1,26 @@
+# =============================================================================
+# Render Blueprint — AI Loan AG
+# Docs: https://render.com/docs/blueprint-spec
+# =============================================================================
+# This file forces Render to use Docker for the ai-services-python service.
+# Without it, Render defaults to its native Python runtime (currently 3.14)
+# which has no prebuilt wheels for pydantic-core and causes build failures.
+
+services:
+  # ── AI Services (Python FastAPI + PaddleOCR) ───────────────────────────────
+  - type: web
+    name: ai-services-python
+    env: docker
+    dockerfilePath: ./ai-services-python/Dockerfile
+    dockerContext: ./ai-services-python
+    plan: starter          # change to 'standard' or higher if needed
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: ai-services-env  # set your secrets in a Render Env Group,
+                                     # OR list them individually below:
+      # - key: GEMINI_API_KEY
+      #   sync: false
+      # - key: DATABASE_URL
+      #   sync: false
+      # - key: OPENAI_SECRET_KEY
+      #   sync: false
