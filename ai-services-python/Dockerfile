@@ -20,7 +20,16 @@ WORKDIR /app
 
 # Install Python dependencies first (layer caching)
 COPY requirements.txt .
-RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Step 1: Install paddlepaddle CPU from PaddlePaddle's official wheel index.
+#         PyPI does not publish manylinux2014 wheels for paddlepaddle on Python 3.11,
+#         so we must install it from the upstream source first.
+RUN pip install --default-timeout=300 --no-cache-dir \
+    paddlepaddle==2.6.1 \
+    -f https://www.paddlepaddle.org.cn/whl/linux/cpu-mkl/stable.html
+
+# Step 2: Install the rest of the project dependencies
+RUN pip install --default-timeout=300 --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
