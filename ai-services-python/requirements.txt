@@ -4,16 +4,19 @@
 # ============================================================
 
 # ── Web Framework ─────────────────────────────────────────────
-fastapi==0.115.5
+fastapi>=0.115.5               # keep flexible; 0.115.5+ is py3.14 compatible
 uvicorn[standard]==0.32.1
 python-multipart==0.0.12
 
 # ── Settings & Validation ─────────────────────────────────────
-pydantic==2.10.3
-pydantic-settings==2.6.1
+# pydantic>=2.12.0 is the FIRST release with prebuilt Python 3.14 wheels.
+# Older versions (<=2.11.x) require Rust/Cargo to build pydantic-core from
+# source, which fails on Render's read-only /usr/local/cargo filesystem.
+pydantic>=2.12.0
+pydantic-settings>=2.7.0
 
 # ── Database ──────────────────────────────────────────────────
-asyncpg==0.30.0           # async PostgreSQL driver (pgvector compatible)
+asyncpg>=0.30.0            # async PostgreSQL driver; >=0.30 has py3.14 wheels
 
 # ── Document Parsing & OCR (lightweight) ──────────────────────
 # pdfplumber: native PDF text extraction (no ML needed)
