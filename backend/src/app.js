@@ -13,44 +13,41 @@ import { rateLimiter } from './middleware/rateLimiter.js';
 import router from './routes/index.js';
 
 
-
-
-
 export const createApp = () => {
   const app = express();
 
-  
+
   app.use(helmet());
 
-  
+
   app.use(
     cors({
-      origin: env.NODE_ENV === 'production' 
-        ? process.env.ALLOWED_ORIGINS?.split(',') 
-        : ['http://localhost:3000', 'http://localhost:5173'],
+      origin: env.NODE_ENV === 'production'
+        ? process.env.ALLOWED_ORIGINS?.split(',')
+        : ['http://localhost:3000', 'http://localhost:5173', 'https://capitalscale.vercel.app/'],
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
-      credentials: true,   
+      credentials: true,
     })
   );
 
-  
+
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  
+
   app.use(cookieParser());
 
-  
+
   app.use(requestLogger);
 
-  
+
   app.use('/api', rateLimiter);
 
-  
+
   app.use('/api', router);
 
-  
+
   app.get('/', (_req, res) => {
     res.json({
       service: 'AI Loan Underwriting Backend',
@@ -60,7 +57,7 @@ export const createApp = () => {
     });
   });
 
-  
+
   app.use((_req, res) => {
     res.status(404).json({
       success: false,
@@ -68,7 +65,7 @@ export const createApp = () => {
     });
   });
 
-  
+
   app.use(errorHandler);
 
   return app;
